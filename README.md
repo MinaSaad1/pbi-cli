@@ -1,3 +1,5 @@
+[![MseeP.ai Security Assessment Badge](https://mseep.net/pr/minasaad1-pbi-cli-badge.png)](https://mseep.ai/app/minasaad1-pbi-cli)
+
 <p align="center">
   <img src="https://raw.githubusercontent.com/MinaSaad1/pbi-cli/master/assets/banner.svg" alt="pbi-cli" width="850"/>
 </p>
