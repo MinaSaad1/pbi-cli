@@ -60,6 +60,25 @@ jobs:
           # resolves ts-loader the way pbiviz expects.
           npm install --save-dev --no-audit --no-fund "powerbi-visuals-tools@${PBIVIZ_VERSION}"
 
+      - name: Fill required pbiviz.json metadata
+        shell: bash
+        working-directory: smoke/smokevisual
+        run: |
+          # pbiviz package strict-validates author/description/supportUrl.
+          # Scaffold leaves them blank; fill with smoke-test placeholders.
+          node -e '
+            const fs = require("fs");
+            const p = "pbiviz.json";
+            const j = JSON.parse(fs.readFileSync(p, "utf8"));
+            j.visual = j.visual || {};
+            j.visual.description = j.visual.description || "Smoke test custom visual";
+            j.visual.supportUrl = j.visual.supportUrl || "https://example.com";
+            j.author = j.author || {};
+            j.author.name = j.author.name || "pbi-cli smoke test";
+            j.author.email = j.author.email || "noreply@example.com";
+            fs.writeFileSync(p, JSON.stringify(j, null, 2));
+          '
+
       - name: Type-check the scaffold
         shell: bash
         working-directory: smoke/smokevisual
