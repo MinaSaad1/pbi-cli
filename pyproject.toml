@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "pbi-cli-tool"
-version = "3.10.10"
+version = "3.11.0"
 description = "CLI for Power BI semantic models and PBIR reports - direct .NET connection for token-efficient AI agent usage"
 readme = "README.pypi.md"
 license = "MIT AND LicenseRef-Microsoft-AS-Client-Libraries"
