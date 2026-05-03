@@ -34,6 +34,8 @@ _PBI_CLI_CLAUDE_MD_SNIPPET = (
     "- **power-bi-pages** -- pages, bookmarks, visibility, drillthrough\n"
     "- **power-bi-themes** -- themes, conditional formatting, styling\n"
     "- **power-bi-filters** -- page and visual filters (TopN, date, categorical)\n"
+    "- **power-bi-custom-visuals** -- vibe-code .pbiviz custom visuals "
+    "(TS scaffold, tsc loop, package, import)\n"
     "\n"
     "Critical: Multi-line DAX (VAR/RETURN) cannot be passed via `-e`.\n"
     "Use `--file` or stdin piping instead. See power-bi-dax skill.\n"

@@ -1,0 +1,84 @@
+name: Custom Visual SDK Smoke
+
+# Catches drift in the pinned powerbi-visuals-tools / powerbi-visuals-api
+# versions without paying the cost on every PR. The matching crib lives in
+# src/pbi_cli/skills/power-bi-custom-visuals/AGENTS-template.md -- when this
+# job breaks, bump both versions and update the crib together.
+
+on:
+  schedule:
+    - cron: "17 5 * * *"  # nightly
+  push:
+    branches: [master]
+    paths:
+      - "src/pbi_cli/skills/power-bi-custom-visuals/**"
+      - "src/pbi_cli/core/custom_visual_backend.py"
+      - ".github/workflows/custom-visual-smoke.yml"
+  pull_request:
+    branches: [master]
+    paths:
+      - "src/pbi_cli/skills/power-bi-custom-visuals/**"
+      - "src/pbi_cli/core/custom_visual_backend.py"
+      - ".github/workflows/custom-visual-smoke.yml"
+  workflow_dispatch:
+
+jobs:
+  pbiviz-end-to-end:
+    runs-on: windows-latest
+    timeout-minutes: 10
+    env:
+      PBIVIZ_VERSION: "^5.6.0"
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install pbi-cli
+        run: pip install -e ".[dev]"
+
+      - name: Scaffold a custom visual
+        shell: bash
+        run: |
+          mkdir -p smoke
+          cd smoke
+          npx --yes "powerbi-visuals-tools@${PBIVIZ_VERSION}" new smoke-visual
+
+      - name: Type-check the scaffold
+        shell: bash
+        working-directory: smoke/smoke-visual
+        run: |
+          npm install --no-audit --no-fund
+          npx tsc --noEmit -p tsconfig.json
+
+      - name: Package the scaffold
+        shell: bash
+        working-directory: smoke/smoke-visual
+        run: npx --yes "powerbi-visuals-tools@${PBIVIZ_VERSION}" package
+
+      - name: Verify .pbiviz produced
+        shell: bash
+        working-directory: smoke/smoke-visual
+        run: |
+          ls dist/*.pbiviz
+          test -s dist/*.pbiviz
+
+      - name: Round-trip through pbi-cli import
+        shell: bash
+        run: |
+          # Build a tiny PBIR target
+          mkdir -p smoke/Demo.Report/definition
+          cat > smoke/Demo.Report/definition/report.json <<'JSON'
+          {
+            "$schema": "https://developer.microsoft.com/json-schemas/fabric/item/report/definition/report/1.0.0/schema.json",
+            "layoutOptimization": "Disabled"
+          }
+          JSON
+          PBIVIZ=$(ls smoke/smoke-visual/dist/*.pbiviz | head -n1)
+          pbi visual --path smoke/Demo.Report --no-sync import-custom "${PBIVIZ}"
+          pbi visual --path smoke/Demo.Report --no-sync list-custom

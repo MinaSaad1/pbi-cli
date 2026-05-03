@@ -5,6 +5,14 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+- **Custom visual authoring** -- vibe-code Power BI custom visuals end-to-end with the new `power-bi-custom-visuals` Claude skill. The skill scaffolds a TypeScript project sibling to your `.pbip` via `npx pbiviz new`, iterates against the Power BI Visuals SDK with `tsc --noEmit` between every change, packages a `.pbiviz`, and embeds it into the report. Auto-installs Node and `pbiviz` (with consent), pins SDK to a known-good version, runs an npm allowlist for common deps. Inner loop is agent-driven on TypeScript errors; visual correctness is checked once with the user at the end.
+- `pbi visual import-custom <pbiviz>` -- copy a locally-built `.pbiviz` into `StaticResources/RegisteredResources/` and register it in `report.json`. `--replace` overwrites by GUID for the iteration loop.
+- `pbi visual list-custom` -- list embedded and public custom visuals with a `kind` distinguisher.
+- `pbi visual remove-custom <guid-or-name>` -- deregister and physically delete the `.pbiviz`.
+
 ## [3.10.6] - 2026-04-07
 
 ### Fixed

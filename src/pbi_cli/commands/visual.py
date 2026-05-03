@@ -658,3 +658,103 @@ def calc_delete(
         visual_name=visual_name,
         calc_name=calc_name,
     )
+
+
+# ---------------------------------------------------------------------------
+# Custom visual commands (locally-built .pbiviz embedding)
+# ---------------------------------------------------------------------------
+
+
+@visual.command(name="import-custom")
+@click.argument("pbiviz_file", type=click.Path(exists=True, dir_okay=False))
+@click.option(
+    "--replace",
+    is_flag=True,
+    default=False,
+    help="Overwrite an existing custom visual with the same GUID.",
+)
+@click.pass_context
+@pass_context
+def import_custom(
+    ctx: PbiContext,
+    click_ctx: click.Context,
+    pbiviz_file: str,
+    replace: bool,
+) -> None:
+    """Import a locally-built .pbiviz into the report.
+
+    Copies the file to ``StaticResources/RegisteredResources/`` and
+    registers it in ``report.json``. Sanity-checks the archive and
+    manifest; deep validation is left to ``pbiviz package`` and Power BI
+    Desktop's loader.
+
+    The GUID is read from the archive's ``package.json``. Pass
+    ``--replace`` to overwrite an existing entry with the same GUID
+    (typical during the vibe-coding iteration loop).
+    """
+    from pathlib import Path
+
+    from pbi_cli.core.custom_visual_backend import custom_visual_import
+    from pbi_cli.core.pbir_path import resolve_report_path
+
+    definition_path = resolve_report_path(_get_report_path(click_ctx))
+    run_command(
+        ctx,
+        custom_visual_import,
+        definition_path=definition_path,
+        pbiviz_path=Path(pbiviz_file),
+        replace=replace,
+    )
+
+
+@visual.command(name="list-custom")
+@click.pass_context
+@pass_context
+def list_custom(ctx: PbiContext, click_ctx: click.Context) -> None:
+    """List custom visuals registered in the report.
+
+    Shows both embedded (locally-built ``.pbiviz``) and public
+    (AppSource / organizational) custom visuals with a ``kind``
+    distinguisher.
+    """
+    from pbi_cli.core.custom_visual_backend import custom_visual_list
+    from pbi_cli.core.pbir_path import resolve_report_path
+
+    definition_path = resolve_report_path(_get_report_path(click_ctx))
+    run_command(
+        ctx,
+        custom_visual_list,
+        definition_path=definition_path,
+    )
+
+
+@visual.command(name="remove-custom")
+@click.argument("identifier")
+@click.pass_context
+@pass_context
+def remove_custom(
+    ctx: PbiContext,
+    click_ctx: click.Context,
+    identifier: str,
+) -> None:
+    """Remove an embedded custom visual by GUID or name.
+
+    GUID is canonical and unambiguous. Name lookup matches the
+    ``<safe-name>`` portion of the registered filename; if the name
+    matches multiple visuals, the command errors and asks you to
+    disambiguate by GUID. The ``.pbiviz`` resource file is deleted from
+    ``StaticResources/RegisteredResources/`` along with its registration.
+
+    Public (AppSource) entries are out of scope; remove those from
+    ``report.json`` directly or via Power BI Desktop.
+    """
+    from pbi_cli.core.custom_visual_backend import custom_visual_remove
+    from pbi_cli.core.pbir_path import resolve_report_path
+
+    definition_path = resolve_report_path(_get_report_path(click_ctx))
+    run_command(
+        ctx,
+        custom_visual_remove,
+        definition_path=definition_path,
+        identifier=identifier,
+    )

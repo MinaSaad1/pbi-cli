@@ -200,7 +200,7 @@ Bundled DLLs ship inside the Python package (`pbi_cli/dlls/`).
 
 ## Skills
 
-After running `pbi-cli skills install`, Claude Code discovers **12 Power BI skills**. Each skill teaches Claude a different area. You don't need to memorize commands.
+After running `pbi-cli skills install`, Claude Code discovers **13 Power BI skills**. Each skill teaches Claude a different area. You don't need to memorize commands.
 
 <p align="center">
   <img src="https://raw.githubusercontent.com/MinaSaad1/pbi-cli/master/assets/skills-hub.svg" alt="12 Skills" width="850"/>
@@ -227,6 +227,40 @@ After running `pbi-cli skills install`, Claude Code discovers **12 Power BI skil
 | **Pages** | *"Add an Executive Overview page"* | Manages pages, bookmarks, visibility, drillthrough |
 | **Themes** | *"Apply our corporate brand colours"* | Applies themes, conditional formatting, colour scales |
 | **Filters** | *"Show only the top 10 products"* | Adds page/visual filters (TopN, date, categorical) |
+| **Custom Visuals** | *"Build a radial gauge Power BI doesn't have"* | Scaffolds a TypeScript visual project, iterates on `tsc --noEmit`, packages `.pbiviz`, imports into the report |
+
+---
+
+## Custom Visual Authoring
+
+The **Custom Visuals** skill turns vibe-coding into the Power BI Visuals SDK loop.
+Claude scaffolds a sibling TypeScript project with `npx pbiviz new`, iterates against
+the Power BI Visuals API with `tsc --noEmit` between every change, packages a
+`.pbiviz`, and embeds it into your report:
+
+```bash
+# After installing the skill, just describe what you want in Claude Code:
+#   "Build me a radial gauge that highlights values above target"
+#
+# Under the hood, the skill drives:
+npx --yes powerbi-visuals-tools@^5.6.0 new my-gauge-visual
+# (Claude edits src/visual.ts + capabilities.json, runs tsc --noEmit until clean)
+npx --yes powerbi-visuals-tools@^5.6.0 package
+pbi visual import-custom dist/my-gauge-visual.1.0.5.pbiviz --replace
+```
+
+The skill auto-installs Node and `pbiviz` on first run (with your consent), pins
+the SDK to a known-good version, keeps the TypeScript project as a sibling to your
+`.pbip` (no PBIR contamination), and operates under a curated npm allowlist for
+common deps (D3, Lodash, date-fns) -- anything off-list requires explicit approval.
+
+Three new pbi-cli commands support the loop:
+
+| Command | What it does |
+|---------|-------------|
+| `pbi visual import-custom <pbiviz>` | Embed a locally-built `.pbiviz` into the report's `RegisteredResources/` and register it in `report.json`. `--replace` overwrites by GUID. |
+| `pbi visual list-custom` | List embedded and public (AppSource) custom visuals, distinguished by `kind`. |
+| `pbi visual remove-custom <guid-or-name>` | Deregister and physically delete the `.pbiviz` resource. |
 
 ---
 
