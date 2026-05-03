@@ -49,17 +49,26 @@ jobs:
           cd smoke
           npx --yes "powerbi-visuals-tools@${PBIVIZ_VERSION}" new smokevisual
 
-      - name: Type-check the scaffold
+      - name: Install deps (incl. local pbiviz so webpack loaders resolve)
         shell: bash
         working-directory: smoke/smokevisual
         run: |
           npm install --no-audit --no-fund
-          npx tsc --noEmit -p tsconfig.json
+          # pbiviz from the npx cache can't resolve ts-loader/webpack from the
+          # project's node_modules at package-time. Installing it locally
+          # brings the full loader chain into ./node_modules, so webpack
+          # resolves ts-loader the way pbiviz expects.
+          npm install --save-dev --no-audit --no-fund "powerbi-visuals-tools@${PBIVIZ_VERSION}"
+
+      - name: Type-check the scaffold
+        shell: bash
+        working-directory: smoke/smokevisual
+        run: npx tsc --noEmit -p tsconfig.json
 
       - name: Package the scaffold
         shell: bash
         working-directory: smoke/smokevisual
-        run: npx --yes "powerbi-visuals-tools@${PBIVIZ_VERSION}" package
+        run: ./node_modules/.bin/pbiviz package
 
       - name: Verify .pbiviz produced
         shell: bash
