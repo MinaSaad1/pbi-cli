@@ -101,10 +101,16 @@ plan step and iterate directly.
 Working directory: parent of the user's PBIR project (sibling, never
 inside `.Report` or `.pbip`).
 
+**Naming constraint:** `pbiviz new` rejects names containing anything
+other than letters and digits. No hyphens, no underscores, no dots.
+If the user's spec name has those (e.g. "my-gauge-visual"), strip them
+before scaffolding (e.g. `mygaugevisual`). The friendly displayName in
+`pbiviz.json` can still carry spaces and punctuation.
+
 ```bash
 # Inside <project-parent>/
-npx --yes powerbi-visuals-tools@^5.6.0 new <visual-name>
-cd <visual-name>
+npx --yes powerbi-visuals-tools@^5.6.0 new <visualname>
+cd <visualname>
 ```
 
 ### Auto-strip the circle-card demo
@@ -180,10 +186,10 @@ pbi-cli internal pbiviz-bump  # see note below
 
 # Package
 npx --yes powerbi-visuals-tools@^5.6.0 package
-# .pbiviz lands in dist/<visual-name>.<version>.pbiviz
+# .pbiviz lands in dist/<visualname>.<version>.pbiviz
 
 # Import into the user's report
-pbi visual import-custom dist/<visual-name>.<version>.pbiviz --replace
+pbi visual import-custom dist/<visualname>.<version>.pbiviz --replace
 ```
 
 **Version auto-bump.** Use the helper exposed via the skill (or call

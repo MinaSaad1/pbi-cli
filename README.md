@@ -243,10 +243,10 @@ the Power BI Visuals API with `tsc --noEmit` between every change, packages a
 #   "Build me a radial gauge that highlights values above target"
 #
 # Under the hood, the skill drives:
-npx --yes powerbi-visuals-tools@^5.6.0 new my-gauge-visual
+npx --yes powerbi-visuals-tools@^5.6.0 new mygaugevisual
 # (Claude edits src/visual.ts + capabilities.json, runs tsc --noEmit until clean)
 npx --yes powerbi-visuals-tools@^5.6.0 package
-pbi visual import-custom dist/my-gauge-visual.1.0.5.pbiviz --replace
+pbi visual import-custom dist/mygaugevisual.1.0.5.pbiviz --replace
 ```
 
 The skill auto-installs Node and `pbiviz` on first run (with your consent), pins

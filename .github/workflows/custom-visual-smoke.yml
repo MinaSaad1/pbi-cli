@@ -47,23 +47,23 @@ jobs:
         run: |
           mkdir -p smoke
           cd smoke
-          npx --yes "powerbi-visuals-tools@${PBIVIZ_VERSION}" new smoke-visual
+          npx --yes "powerbi-visuals-tools@${PBIVIZ_VERSION}" new smokevisual
 
       - name: Type-check the scaffold
         shell: bash
-        working-directory: smoke/smoke-visual
+        working-directory: smoke/smokevisual
         run: |
           npm install --no-audit --no-fund
           npx tsc --noEmit -p tsconfig.json
 
       - name: Package the scaffold
         shell: bash
-        working-directory: smoke/smoke-visual
+        working-directory: smoke/smokevisual
         run: npx --yes "powerbi-visuals-tools@${PBIVIZ_VERSION}" package
 
       - name: Verify .pbiviz produced
         shell: bash
-        working-directory: smoke/smoke-visual
+        working-directory: smoke/smokevisual
         run: |
           ls dist/*.pbiviz
           test -s dist/*.pbiviz
@@ -79,6 +79,6 @@ jobs:
             "layoutOptimization": "Disabled"
           }
           JSON
-          PBIVIZ=$(ls smoke/smoke-visual/dist/*.pbiviz | head -n1)
+          PBIVIZ=$(ls smoke/smokevisual/dist/*.pbiviz | head -n1)
           pbi visual --path smoke/Demo.Report --no-sync import-custom "${PBIVIZ}"
           pbi visual --path smoke/Demo.Report --no-sync list-custom
