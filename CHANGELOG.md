@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.11.1] - 2026-05-04
+
+### Fixed
+- `power-bi-custom-visuals` skill now teaches Claude to populate the four metadata fields `pbiviz package` strict-validates (`author.name`, `author.email`, `visual.description`, `visual.supportUrl`). Without this, the first end-to-end run would package-fail with "Author name is not specified" and burn the 5-turn no-progress cap on a metadata error rather than a code error. Author defaults are sourced from `git config user.name`/`user.email`; description is derived from the user's spec; `supportUrl` is a placeholder (`https://example.com`) the user replaces before AppSource publish.
+- AGENTS.md template clarifies `pbiviz.json` is no longer flatly locked: `version` is auto-bumped by the skill, metadata fields are user-editable, structural fields (`apiVersion`, `style`, `capabilities`) remain locked.
+
 ## [3.11.0] - 2026-05-03
 
 ### Added
