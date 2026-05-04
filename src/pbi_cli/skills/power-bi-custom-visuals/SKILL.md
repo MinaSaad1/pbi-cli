@@ -132,6 +132,25 @@ handing off to iteration:
    `package.json` to the pinned version above (only if the scaffold
    doesn't already match).
 
+### Fill required `pbiviz.json` metadata
+
+`pbiviz package` strict-validates four fields and **fails to build**
+if any are missing. The scaffold leaves them blank, so populate them
+before any package step or you'll waste iteration turns chasing a
+"not specified" error that has nothing to do with the code:
+
+| Field                 | Source                                         |
+|-----------------------|------------------------------------------------|
+| `visual.description`  | One-line summary derived from the user's spec  |
+| `visual.supportUrl`   | `"https://example.com"` placeholder (real URL needed for AppSource publish) |
+| `author.name`         | `git config user.name` (run it; fall back to `"pbi-cli user"` if empty) |
+| `author.email`        | `git config user.email` (run it; fall back to `"noreply@example.com"` if empty) |
+
+Do this immediately after auto-stripping the circle-card demo, **once**,
+in a single edit to `pbiviz.json`. If the user later wants to publish to
+AppSource, they replace these values themselves; the skill's auto-bump
+on `version` doesn't touch any other field, so user edits stick.
+
 ### Drop in AGENTS.md
 
 Write `AGENTS.md` at the project root using the template at

@@ -18,13 +18,22 @@ scaffold. Keep it. Update it as the project evolves.
 🔒 **Don't touch without surfacing to the user first:**
 
 - `tsconfig.json` — TypeScript compiler config.
-- `pbiviz.json` — visual metadata (the skill auto-bumps `version` here;
-  don't edit `version` manually unless you mean to override the
-  auto-bump pattern).
 - `package.json` — dependencies are governed by the skill's allowlist.
   See the npm dependency policy in the skill.
 - `webpack.config.js` (if present) — bundler config.
 - `.eslintrc*`, `.prettierrc*` — toolchain configs.
+
+⚠️ **`pbiviz.json` — partial:**
+
+- `visual.version` is **auto-bumped** by the skill on every package.
+  Don't edit it manually unless you mean to override the auto-bump
+  pattern (e.g. set `1.0.0-rc.1` to freeze for a release candidate).
+- `visual.description`, `visual.supportUrl`, `author.name`,
+  `author.email` are **user-editable**. The skill populates placeholder
+  values at scaffold time (`pbiviz package` requires them); the user
+  replaces with real values before AppSource publish.
+- Other fields (`apiVersion`, `style`, `capabilities`) are pinned by
+  the scaffold; treat as locked.
 
 If you think you need to change a locked file, **stop and ask the user**
 with a one-paragraph explanation of why and what changes you want to
