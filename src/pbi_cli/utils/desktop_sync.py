@@ -128,6 +128,32 @@ def _restore_snapshots(snapshots: dict[Path, bytes]) -> list[str]:
 # ---------------------------------------------------------------------------
 
 
+def _hint_tokens(pbip_hint: str | Path) -> set[str]:
+    """Lowercased name tokens from a hint path: its stem plus every directory name.
+
+    The hint reaching ``sync_desktop`` from the report layer is a ``.Report`` folder,
+    not a ``.pbip``. Its stem is therefore the *report* name, which need not resemble
+    the project name at all — so matching on the stem alone silently discards the
+    correct process. Including the ancestor directory names lets the usual layouts
+    (``<Project>/<Project>.Report`` and thin-report repos that nest reports under a
+    project folder) resolve, while keeping the hint a real filter.
+    """
+    p = Path(pbip_hint)
+    tokens = {part.lower() for part in p.parts}
+    tokens.add(p.stem.lower())
+    # A ".Report" folder's stem keeps a trailing space in some exports; normalise.
+    return {t.strip() for t in tokens if t.strip()}
+
+
+def _hint_matches(hint_parts: set[str], pbip_path: str) -> bool:
+    """True when the open .pbip plausibly belongs to the hinted project."""
+    stem = Path(pbip_path).stem.lower().strip()
+    if stem in hint_parts:
+        return True
+    # Preserve the original substring behaviour for a genuine .pbip hint.
+    return any(part in stem or stem in part for part in hint_parts)
+
+
 def _find_desktop_process(
     pbip_hint: str | Path | None,
 ) -> dict[str, Any] | None:
@@ -135,9 +161,9 @@ def _find_desktop_process(
     import win32gui
     import win32process
 
-    hint_stem = None
+    hint_parts: set[str] | None = None
     if pbip_hint is not None:
-        hint_stem = Path(pbip_hint).stem.lower()
+        hint_parts = _hint_tokens(pbip_hint)
 
     matches: list[dict[str, Any]] = []
 
@@ -161,8 +187,8 @@ def _find_desktop_process(
         if pbip_path is None:
             return True
 
-        if hint_stem is not None:
-            if hint_stem not in Path(pbip_path).stem.lower():
+        if hint_parts is not None:
+            if not _hint_matches(hint_parts, pbip_path):
                 return True
 
         matches.append(

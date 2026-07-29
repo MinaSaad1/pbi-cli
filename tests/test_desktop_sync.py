@@ -6,7 +6,7 @@ import json
 import subprocess
 from unittest.mock import patch
 
-from pbi_cli.utils.desktop_sync import _get_process_info
+from pbi_cli.utils.desktop_sync import _get_process_info, _hint_matches, _hint_tokens
 
 EXE = r"C:\Program Files\WindowsApps\Microsoft.MicrosoftPowerBIDesktop\bin\pbidesktop.exe"
 PBIP = r"C:\repo\models\THSAchievement\THSAchievement.pbip"
@@ -70,3 +70,33 @@ def test_does_not_invoke_wmic() -> None:
     argv = mock.call_args.args[0]
     assert argv[0] == "powershell"
     assert "wmic" not in " ".join(argv).lower()
+
+
+# --- hint matching ---------------------------------------------------------
+
+THIN_REPORT = r"semantic-models/THSAchievement/reports/ACA_THS/ACA_THS .Report"
+SIDE_BY_SIDE = r"C:\work\MyModel\MyModel.Report"
+
+
+def test_hint_matches_project_via_ancestor_directory() -> None:
+    """A .Report folder named unlike the .pbip still resolves via its project folder.
+
+    The report layer passes a .Report path, whose stem is the REPORT name. Matching
+    on that stem alone discarded the correct process.
+    """
+    assert _hint_matches(_hint_tokens(THIN_REPORT), r"C:\x\THSAchievement.pbip")
+
+
+def test_hint_matches_side_by_side_layout() -> None:
+    """The conventional <Project>/<Project>.Report layout still matches."""
+    assert _hint_matches(_hint_tokens(SIDE_BY_SIDE), r"C:\work\MyModel\MyModel.pbip")
+
+
+def test_hint_matches_direct_pbip_hint() -> None:
+    """A genuine .pbip hint keeps working."""
+    assert _hint_matches(_hint_tokens(r"C:\x\THSAchievement.pbip"), r"C:\x\THSAchievement.pbip")
+
+
+def test_hint_rejects_unrelated_project() -> None:
+    """The hint is still a filter - an unrelated project must not match."""
+    assert not _hint_matches(_hint_tokens(THIN_REPORT), r"C:\x\BMAT_Bromcom_Data_Model.pbip")
