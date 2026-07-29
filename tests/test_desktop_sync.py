@@ -4,9 +4,14 @@ from __future__ import annotations
 
 import json
 import subprocess
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
-from pbi_cli.utils.desktop_sync import _get_process_info, _hint_matches, _hint_tokens
+from pbi_cli.utils.desktop_sync import (
+    _accept_save_dialog,
+    _get_process_info,
+    _hint_matches,
+    _hint_tokens,
+)
 
 EXE = r"C:\Program Files\WindowsApps\Microsoft.MicrosoftPowerBIDesktop\bin\pbidesktop.exe"
 PBIP = r"C:\repo\models\THSAchievement\THSAchievement.pbip"
@@ -100,3 +105,44 @@ def test_hint_matches_direct_pbip_hint() -> None:
 def test_hint_rejects_unrelated_project() -> None:
     """The hint is still a filter - an unrelated project must not match."""
     assert not _hint_matches(_hint_tokens(THIN_REPORT), r"C:\x\BMAT_Bromcom_Data_Model.pbip")
+
+
+# --- save-dialog race ------------------------------------------------------
+
+
+def test_accept_save_dialog_waits_for_a_late_dialog() -> None:
+    """The prompt is polled, not checked once.
+
+    Desktop does not raise the dialog promptly when busy (e.g. straight after a
+    table refresh). A single check meant the prompt could appear after we looked,
+    so no key was ever sent and the close stranded silently.
+    """
+    calls = {"n": 0}
+
+    def present() -> bool:
+        calls["n"] += 1
+        return calls["n"] >= 3  # appears only on the third look
+
+    shell = MagicMock()
+    shell.AppActivate.return_value = True
+    with (
+        patch("pbi_cli.utils.desktop_sync._save_dialog_present", side_effect=present),
+        patch("pbi_cli.utils.desktop_sync._get_wscript_shell", return_value=shell),
+        patch("pbi_cli.utils.desktop_sync.time.sleep"),
+    ):
+        _accept_save_dialog(timeout=10)
+
+    shell.SendKeys.assert_called_once_with("{ENTER}")
+
+
+def test_accept_save_dialog_gives_up_at_the_deadline() -> None:
+    """A dialog that never appears must not hang forever, and must send nothing."""
+    shell = MagicMock()
+    with (
+        patch("pbi_cli.utils.desktop_sync._save_dialog_present", return_value=False),
+        patch("pbi_cli.utils.desktop_sync._get_wscript_shell", return_value=shell),
+        patch("pbi_cli.utils.desktop_sync.time.sleep"),
+    ):
+        _accept_save_dialog(timeout=0)
+
+    shell.SendKeys.assert_not_called()

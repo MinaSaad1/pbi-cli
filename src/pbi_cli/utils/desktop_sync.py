@@ -25,6 +25,14 @@ import time
 from pathlib import Path
 from typing import Any
 
+# How long to wait for the save prompt to appear after WM_CLOSE. Desktop can be
+# slow to raise it when busy (e.g. immediately after a table refresh).
+DIALOG_TIMEOUT = 60.0
+# How long to wait for the process to exit once the prompt has been accepted.
+# Saving a large model routinely exceeds a minute.
+CLOSE_TIMEOUT = 600.0
+POLL_INTERVAL = 0.5
+
 
 def sync_desktop(
     pbip_hint: str | Path | None = None,
@@ -282,44 +290,40 @@ def _close_with_save(hwnd: int, pid: int) -> dict[str, Any] | None:
     import win32gui
 
     win32gui.PostMessage(hwnd, win32con.WM_CLOSE, 0, 0)
-    time.sleep(2)
 
-    # Accept the save dialog (Enter = Save, which is the default button)
+    # Poll for the save dialog rather than assuming it is up after a fixed wait.
     _accept_save_dialog()
 
-    # Wait for process to exit (up to 20 seconds -- saving can take time)
-    for _ in range(40):
-        if not _process_alive(pid):
-            return None
-        time.sleep(0.5)
+    # Then wait for the process to actually exit. Writing a large model can take
+    # minutes -- Desktop shows a "Working on it" dialog throughout -- so this is
+    # deliberately generous; the previous 20s deadline expired mid-save.
+    deadline = time.monotonic() + CLOSE_TIMEOUT
+    while _process_alive(pid):
+        if time.monotonic() >= deadline:
+            return {
+                "status": "error",
+                "method": "pywin32",
+                "message": (
+                    f"Power BI Desktop did not close within {CLOSE_TIMEOUT:.0f} seconds. "
+                    "Please save and close manually, then reopen the .pbip file."
+                ),
+            }
+        time.sleep(POLL_INTERVAL)
 
-    return {
-        "status": "error",
-        "method": "pywin32",
-        "message": (
-            "Power BI Desktop did not close within 20 seconds. "
-            "Please save and close manually, then reopen the .pbip file."
-        ),
-    }
+    return None
 
 
-def _accept_save_dialog() -> None:
-    """Find and accept the save dialog by pressing Enter (Save is default).
-
-    After WM_CLOSE, Power BI Desktop shows a dialog:
-      [Save]  [Don't Save]  [Cancel]
-    'Save' is the default focused button, so Enter clicks it.
-    """
+def _save_dialog_present() -> bool:
+    """True when Desktop's [Save] [Don't Save] [Cancel] prompt is on screen."""
     import win32gui
 
-    dialog_found = False
+    found = False
 
     def callback(hwnd: int, _: Any) -> bool:
-        nonlocal dialog_found
+        nonlocal found
         if win32gui.IsWindowVisible(hwnd):
-            title = win32gui.GetWindowText(hwnd)
-            if title == "Microsoft Power BI Desktop":
-                dialog_found = True
+            if win32gui.GetWindowText(hwnd) == "Microsoft Power BI Desktop":
+                found = True
         return True
 
     try:
@@ -327,8 +331,28 @@ def _accept_save_dialog() -> None:
     except Exception:
         pass
 
-    if not dialog_found:
-        return
+    return found
+
+
+def _accept_save_dialog(timeout: float = DIALOG_TIMEOUT) -> None:
+    """Wait for the save dialog to appear, then accept it (Enter = Save).
+
+    After WM_CLOSE, Power BI Desktop shows a dialog:
+      [Save]  [Don't Save]  [Cancel]
+    'Save' is the default focused button, so Enter clicks it.
+
+    The dialog is POLLED rather than checked once. Desktop does not raise it
+    promptly when it is busy — notably straight after a table refresh — and a
+    single check meant the prompt could appear *after* we looked, so no key was
+    ever sent and the caller then waited out its timeout on a dialog nobody had
+    answered. That failure was silent: the dialog is the only thing that can
+    complete the close, so missing it strands the save entirely.
+    """
+    deadline = time.monotonic() + timeout
+    while not _save_dialog_present():
+        if time.monotonic() >= deadline:
+            return
+        time.sleep(POLL_INTERVAL)
 
     try:
         shell = _get_wscript_shell()
