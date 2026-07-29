@@ -19,6 +19,7 @@ Requires pywin32.
 
 from __future__ import annotations
 
+import json
 import subprocess
 import time
 from pathlib import Path
@@ -183,40 +184,62 @@ def _find_desktop_process(
     return matches[0] if matches else None
 
 
+_PS_PROCESS_QUERY = (
+    '$p = Get-CimInstance Win32_Process -Filter "ProcessId=%d"; '
+    "if ($p) { [pscustomobject]@{ exe = $p.ExecutablePath; cmd = $p.CommandLine } "
+    "| ConvertTo-Json -Compress }"
+)
+
+
 def _get_process_info(pid: int) -> dict[str, str] | None:
-    """Get exe path and .pbip file from a process command line via wmic."""
+    """Get exe path and .pbip file from a process command line.
+
+    Uses PowerShell's ``Get-CimInstance Win32_Process`` rather than ``wmic``.
+    WMIC was deprecated in 2021 and is **no longer present** on Windows 11
+    24H2 and later, so the previous implementation raised ``FileNotFoundError``
+    for every process. Because the failure was swallowed, discovery silently
+    returned no matches and ``sync_desktop`` reported "Power BI Desktop is not
+    running" while it was plainly running.
+    """
     try:
         out = subprocess.check_output(
             [
-                "wmic",
-                "process",
-                "where",
-                f"ProcessId={pid}",
-                "get",
-                "ExecutablePath,CommandLine",
-                "/format:list",
+                "powershell",
+                "-NoProfile",
+                "-NonInteractive",
+                "-Command",
+                _PS_PROCESS_QUERY % pid,
             ],
             text=True,
             stderr=subprocess.DEVNULL,
-            timeout=5,
+            timeout=15,
         )
     except Exception:
         return None
 
-    result: dict[str, str] = {}
-    for line in out.strip().split("\n"):
-        line = line.strip()
-        if line.startswith("ExecutablePath="):
-            result["exe"] = line[15:]
-        elif line.startswith("CommandLine="):
-            cmd = line[12:]
-            for part in cmd.split('"'):
-                part = part.strip()
-                if part.lower().endswith(".pbip"):
-                    result["pbip"] = part
-                    break
+    out = out.strip()
+    if not out:
+        return None
 
-    return result if "exe" in result else None
+    try:
+        data = json.loads(out)
+    except (ValueError, TypeError):
+        return None
+    if not isinstance(data, dict):
+        return None
+
+    exe = data.get("exe")
+    if not exe:
+        return None
+
+    result: dict[str, str] = {"exe": str(exe)}
+    for part in str(data.get("cmd") or "").split('"'):
+        part = part.strip()
+        if part.lower().endswith(".pbip"):
+            result["pbip"] = part
+            break
+
+    return result
 
 
 # ---------------------------------------------------------------------------
