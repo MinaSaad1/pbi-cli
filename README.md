@@ -366,3 +366,18 @@ Contributions are welcome! Please open an issue first to discuss what you'd like
 <p align="center">
   <sub>MIT License — bundled Microsoft DLLs are licensed separately, see <a href="THIRD_PARTY_LICENSES.md">THIRD_PARTY_LICENSES.md</a></sub>
 </p>
+
+---
+
+## About
+
+pbi-cli is built and maintained by [Mina Saad](https://www.mina-saad.com/pbi-cli). It started as a
+fix for the slowest part of my own job: authoring a measure meant a dialog, a
+refresh, and a visual check, every time.
+
+If your team has the same problem one layer up, that is the work I do.
+
+I work out what is actually costing a business, then build whatever fixes it: an
+AI agent, an automation, or a full application. Handed over so your team owns it.
+
+[Book a call](https://cal.com/minasaad/60min) · [mina-saad.com](https://www.mina-saad.com)
