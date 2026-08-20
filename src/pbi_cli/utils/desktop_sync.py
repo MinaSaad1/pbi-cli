@@ -22,7 +22,7 @@ from __future__ import annotations
 import json
 import subprocess
 import time
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 from typing import Any
 
 # How long to wait for the save prompt to appear after WM_CLOSE. Desktop can be
@@ -141,25 +141,42 @@ def _hint_tokens(pbip_hint: str | Path) -> set[str]:
 
     The hint reaching ``sync_desktop`` from the report layer is a ``.Report`` folder,
     not a ``.pbip``. Its stem is therefore the *report* name, which need not resemble
-    the project name at all — so matching on the stem alone silently discards the
+    the project name at all -- so matching on the stem alone silently discards the
     correct process. Including the ancestor directory names lets the usual layouts
     (``<Project>/<Project>.Report`` and thin-report repos that nest reports under a
     project folder) resolve, while keeping the hint a real filter.
+
+    Paths are parsed with Windows semantics on every platform. This module only
+    runs on Windows, and ``PureWindowsPath`` splits on both separators, so a
+    backslash literal in a test means on a POSIX CI runner what it means here.
+
+    The drive anchor and single-character names are dropped: they carry no
+    project identity and would only widen the match.
     """
-    p = Path(pbip_hint)
-    tokens = {part.lower() for part in p.parts}
-    tokens.add(p.stem.lower())
+    p = PureWindowsPath(str(pbip_hint))
+    parts = p.parts[1:] if p.anchor else p.parts
+    tokens = {part.lower().strip() for part in parts}
     # A ".Report" folder's stem keeps a trailing space in some exports; normalise.
-    return {t.strip() for t in tokens if t.strip()}
+    tokens.add(p.stem.lower().strip())
+    return {t for t in tokens if len(t) > 1}
 
 
 def _hint_matches(hint_parts: set[str], pbip_path: str) -> bool:
-    """True when the open .pbip plausibly belongs to the hinted project."""
-    stem = Path(pbip_path).stem.lower().strip()
-    if stem in hint_parts:
-        return True
-    # Preserve the original substring behaviour for a genuine .pbip hint.
-    return any(part in stem or stem in part for part in hint_parts)
+    """True when the open .pbip belongs to the hinted project.
+
+    The comparison is exact. Substring matching in either direction looked
+    permissive in a good way, but every ancestor directory is a token, so
+    ordinary path components became live matchers: a username directory made
+    ``Mina_Test.pbip`` match a hint under ``C:/Users/mina/``, and a project
+    named ``Sales`` matched ``Salesforce_Extract.pbip``.
+
+    That is not a wrong answer, it is a wrong *process*. ``_find_desktop_process``
+    hands its first match to ``_close_with_save``, which force-closes and saves
+    it -- so a loose predicate here restarts somebody else's Desktop session and
+    reopens the wrong .pbip. Failing to match is recoverable ("not running");
+    matching the wrong instance is not.
+    """
+    return PureWindowsPath(pbip_path).stem.lower().strip() in hint_parts
 
 
 def _find_desktop_process(
@@ -292,7 +309,7 @@ def _close_with_save(hwnd: int, pid: int) -> dict[str, Any] | None:
     win32gui.PostMessage(hwnd, win32con.WM_CLOSE, 0, 0)
 
     # Poll for the save dialog rather than assuming it is up after a fixed wait.
-    _accept_save_dialog()
+    _accept_save_dialog(pid)
 
     # Then wait for the process to actually exit. Writing a large model can take
     # minutes -- Desktop shows a "Working on it" dialog throughout -- so this is
@@ -334,7 +351,7 @@ def _save_dialog_present() -> bool:
     return found
 
 
-def _accept_save_dialog(timeout: float = DIALOG_TIMEOUT) -> None:
+def _accept_save_dialog(pid: int | None = None, timeout: float = DIALOG_TIMEOUT) -> None:
     """Wait for the save dialog to appear, then accept it (Enter = Save).
 
     After WM_CLOSE, Power BI Desktop shows a dialog:
@@ -347,9 +364,17 @@ def _accept_save_dialog(timeout: float = DIALOG_TIMEOUT) -> None:
     ever sent and the caller then waited out its timeout on a dialog nobody had
     answered. That failure was silent: the dialog is the only thing that can
     complete the close, so missing it strands the save entirely.
+
+    Polling alone has a third outcome to account for, and it is the common one:
+    Desktop with nothing to save closes on WM_CLOSE without ever prompting.
+    Without *pid* the loop cannot tell that from a late dialog and burns the
+    whole timeout -- 60s where the fixed-sleep version took 2s. Watching the
+    process closes that gap.
     """
     deadline = time.monotonic() + timeout
     while not _save_dialog_present():
+        if pid is not None and not _process_alive(pid):
+            return  # closed cleanly; there was nothing to save
         if time.monotonic() >= deadline:
             return
         time.sleep(POLL_INTERVAL)

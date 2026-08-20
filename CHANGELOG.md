@@ -5,6 +5,17 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+- `pbi report reload` is no longer a silent no-op on Windows 11 24H2 and later. Process discovery shelled out to `wmic`, which Microsoft removed from current Windows, so every lookup raised `FileNotFoundError`. The bare `except` swallowed it and `sync_desktop` reported "Power BI Desktop is not running" while it was plainly running. Now uses PowerShell's `Get-CimInstance Win32_Process` and parses JSON, so command lines containing quotes survive intact ([#17](https://github.com/MinaSaad1/pbi-cli/pull/17), thanks [@BMATPowerBI](https://github.com/BMATPowerBI)).
+- Desktop discovery no longer discards the correct process when the `.Report` folder is named differently from the `.pbip`. The hint arriving from the report layer is a `.Report` path, so matching on its stem alone filtered out the match in thin-report layouts.
+- The save prompt after `WM_CLOSE` is polled rather than checked once. Desktop does not raise it promptly when busy (notably straight after a table refresh), so a single check could look before the prompt appeared, send no key, and strand the save.
+- The close deadline is no longer 20 seconds. Writing a large model routinely exceeds it, and the old limit expired mid-save.
+
+### Security
+- Desktop discovery can no longer select the wrong Power BI Desktop instance. The hint predicate matched substrings against every ancestor directory name, so ordinary path components acted as wildcards -- a username directory made an unrelated `Mina_Test.pbip` match a hint under `C:/Users/mina/`. Because `_find_desktop_process` hands its first match to `_close_with_save`, a false match force-closed, saved and reopened someone else's session. Matching is now exact.
+
 ## [3.11.2] - 2026-05-07
 
 ### Fixed

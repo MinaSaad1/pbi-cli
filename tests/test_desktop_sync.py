@@ -146,3 +146,80 @@ def test_accept_save_dialog_gives_up_at_the_deadline() -> None:
         _accept_save_dialog(timeout=0)
 
     shell.SendKeys.assert_not_called()
+
+
+# --- hint matching must not select an unrelated project --------------------
+
+USER_DIR_HINT = r"C:\Users\mina\OneDrive\Power BI\Sales\Sales.Report"
+
+
+def test_hint_tokens_parse_windows_paths_on_any_platform() -> None:
+    """Backslash paths tokenise into components even on a POSIX CI runner.
+
+    Parsed with PurePosixPath these collapse to a single token, so tests using
+    Windows literals passed by whole-string equality rather than by exercising
+    the tokeniser they document.
+    """
+    assert _hint_tokens(SIDE_BY_SIDE) == {"work", "mymodel", "mymodel.report"}
+
+
+def test_hint_rejects_sibling_project_under_a_shared_user_directory() -> None:
+    """An ancestor directory must not vouch for a project that merely contains it.
+
+    Every path under a user profile carries that username as a token. Matching
+    on containment made it a wildcard for any project whose name embeds it.
+    """
+    assert not _hint_matches(_hint_tokens(USER_DIR_HINT), r"C:\Users\mina\Docs\Mina_Test.pbip")
+
+
+def test_hint_rejects_project_sharing_a_prefix_with_the_hint() -> None:
+    """A project name that starts with the hinted one is a different project."""
+    assert not _hint_matches(_hint_tokens(USER_DIR_HINT), r"C:\Projects\Salesforce_Extract.pbip")
+
+
+def test_hint_still_matches_its_own_project_from_a_user_directory() -> None:
+    """Tightening the predicate must not cost the true positive."""
+    assert _hint_matches(_hint_tokens(USER_DIR_HINT), r"C:\Users\mina\OneDrive\Sales.pbip")
+
+
+# --- the close path must not wait out a prompt that will never appear ------
+
+
+def test_accept_save_dialog_returns_when_the_process_exits_unprompted() -> None:
+    """Desktop with nothing to save closes without prompting; don't wait for it.
+
+    Without the pid the loop cannot distinguish this from a late dialog and
+    burns the full DIALOG_TIMEOUT on every sync that had nothing to save.
+    """
+    shell = MagicMock()
+    with (
+        patch("pbi_cli.utils.desktop_sync._save_dialog_present", return_value=False),
+        patch("pbi_cli.utils.desktop_sync._process_alive", return_value=False),
+        patch("pbi_cli.utils.desktop_sync._get_wscript_shell", return_value=shell),
+        patch("pbi_cli.utils.desktop_sync.time.sleep") as sleep,
+    ):
+        _accept_save_dialog(pid=4321, timeout=600)
+
+    sleep.assert_not_called()
+    shell.SendKeys.assert_not_called()
+
+
+def test_accept_save_dialog_still_waits_for_a_late_dialog_while_alive() -> None:
+    """A live process with a slow prompt is still waited for, and answered."""
+    calls = {"n": 0}
+
+    def present() -> bool:
+        calls["n"] += 1
+        return calls["n"] >= 3
+
+    shell = MagicMock()
+    shell.AppActivate.return_value = True
+    with (
+        patch("pbi_cli.utils.desktop_sync._save_dialog_present", side_effect=present),
+        patch("pbi_cli.utils.desktop_sync._process_alive", return_value=True),
+        patch("pbi_cli.utils.desktop_sync._get_wscript_shell", return_value=shell),
+        patch("pbi_cli.utils.desktop_sync.time.sleep"),
+    ):
+        _accept_save_dialog(pid=4321, timeout=10)
+
+    shell.SendKeys.assert_called_once_with("{ENTER}")
