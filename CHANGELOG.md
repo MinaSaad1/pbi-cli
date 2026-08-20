@@ -5,22 +5,22 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [3.11.2] - 2026-08-20
 
 ### Fixed
 - `pbi report reload` is no longer a silent no-op on Windows 11 24H2 and later. Process discovery shelled out to `wmic`, which Microsoft removed from current Windows, so every lookup raised `FileNotFoundError`. The bare `except` swallowed it and `sync_desktop` reported "Power BI Desktop is not running" while it was plainly running. Now uses PowerShell's `Get-CimInstance Win32_Process` and parses JSON, so command lines containing quotes survive intact ([#17](https://github.com/MinaSaad1/pbi-cli/pull/17), thanks [@BMATPowerBI](https://github.com/BMATPowerBI)).
 - Desktop discovery no longer discards the correct process when the `.Report` folder is named differently from the `.pbip`. The hint arriving from the report layer is a `.Report` path, so matching on its stem alone filtered out the match in thin-report layouts.
-- The save prompt after `WM_CLOSE` is polled rather than checked once. Desktop does not raise it promptly when busy (notably straight after a table refresh), so a single check could look before the prompt appeared, send no key, and strand the save.
+- The save prompt after `WM_CLOSE` is polled rather than checked once. Desktop does not raise it promptly when busy (notably straight after a table refresh), so a single check could look before the prompt appeared, send no key, and strand the save. The wait also ends as soon as the process exits, so a close with nothing to save no longer sits out the full timeout.
 - The close deadline is no longer 20 seconds. Writing a large model routinely exceeds it, and the old limit expired mid-save.
+- `power-bi-report` skill no longer claims `pbi report reload` "sends a keyboard shortcut" to Power BI Desktop. The actual implementation calls `sync_desktop()`: it saves and closes the open `.pbip`, re-applies any PBIR edits that Desktop's save would overwrite, then reopens the file. The stale wording was confusing users who expected a `Ctrl+Shift+F5` keypress and looked it up in Microsoft's shortcut docs ([#8](https://github.com/MinaSaad1/pbi-cli/issues/8)).
+- Auto-sync section of the same skill now states explicitly that sync closes and reopens Desktop after each write, so the close/reopen behavior triggered by `pbi visual update` (and other write commands) is no longer surprising. `--no-sync` remains the escape hatch.
+- `pbi --version` reports the installed version again. `__version__` was hardcoded and had drifted to 3.10.10; it is now read from package metadata, so it cannot drift from the released version again ([#18](https://github.com/MinaSaad1/pbi-cli/issues/18)).
 
 ### Security
 - Desktop discovery can no longer select the wrong Power BI Desktop instance. The hint predicate matched substrings against every ancestor directory name, so ordinary path components acted as wildcards -- a username directory made an unrelated `Mina_Test.pbip` match a hint under `C:/Users/mina/`. Because `_find_desktop_process` hands its first match to `_close_with_save`, a false match force-closed, saved and reopened someone else's session. Matching is now exact.
 
-## [3.11.2] - 2026-05-07
-
-### Fixed
-- `power-bi-report` skill no longer claims `pbi report reload` "sends a keyboard shortcut" to Power BI Desktop. The actual implementation calls `sync_desktop()`: it saves and closes the open `.pbip`, re-applies any PBIR edits that Desktop's save would overwrite, then reopens the file. The stale wording was confusing users who expected a `Ctrl+Shift+F5` keypress and looked it up in Microsoft's shortcut docs ([#8](https://github.com/MinaSaad1/pbi-cli/issues/8)).
-- Auto-sync section of the same skill now states explicitly that sync closes and reopens Desktop after each write, so the close/reopen behavior triggered by `pbi visual update` (and other write commands) is no longer surprising. `--no-sync` remains the escape hatch.
+### Changed
+- The "All Commands" table listed `skills install/list/uninstall` alongside `pbi` subcommands, though the group is registered on the `pbi-cli` entry point only. It now carries the `pbi-cli` prefix explicitly ([#18](https://github.com/MinaSaad1/pbi-cli/issues/18)).
 
 ### Removed
 - `src/pbi_cli/utils/desktop_reload.py` -- dead code. The Ctrl+Shift+F5 keyboard-shortcut module was an earlier implementation no longer imported anywhere in `src/`. The `[reload]` extras in `pyproject.toml` (which installs `pywin32`) is unchanged because `desktop_sync.py` still depends on it.
