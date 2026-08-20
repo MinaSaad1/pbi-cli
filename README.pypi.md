@@ -115,7 +115,8 @@ After running `pbi-cli skills install`, Claude Code discovers **12 Power BI skil
 | **Filters** | `filters list/add-categorical/add-topn/add-relative-date/remove/clear` |
 | **Formatting** | `format get/clear/background-gradient/background-conditional/background-measure` |
 | **Bookmarks** | `bookmarks list/get/add/delete/set-visibility` |
-| **Tools** | `setup`, `repl`, `skills install/list/uninstall` |
+| **Tools** | `setup`, `repl` |
+| **Setup** | `pbi-cli skills install/list/uninstall` (on the `pbi-cli` command, not `pbi`) |
 
 Use `--json` for machine-readable output:
 

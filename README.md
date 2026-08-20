@@ -267,6 +267,7 @@ Three new pbi-cli commands support the loop:
 ## All Commands
 
 27 command groups covering both the semantic model and the report layer.
+Every command below is a `pbi` subcommand, except where the `pbi-cli` prefix is shown.
 
 | Category | Commands |
 |----------|----------|
@@ -283,7 +284,8 @@ Three new pbi-cli commands support the loop:
 | **Filters** | `filters list`, `filters add-categorical/add-topn/add-relative-date`, `filters remove/clear` |
 | **Formatting** | `format get/clear`, `format background-gradient/background-conditional/background-measure` |
 | **Bookmarks** | `bookmarks list/get/add/delete/set-visibility` |
-| **Tools** | `setup`, `repl`, `skills install/list/uninstall` |
+| **Tools** | `setup`, `repl` |
+| **Setup** | `pbi-cli skills install/list/uninstall` (on the `pbi-cli` command, not `pbi`) |
 
 Use `--json` for machine-readable output (for scripts and AI agents):
 
