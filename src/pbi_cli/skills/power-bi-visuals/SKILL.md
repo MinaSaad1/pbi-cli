@@ -98,9 +98,26 @@ pbi visual bind mygauge --page p1 \
 ```
 
 Binding uses ROLE_ALIASES to translate friendly names like `--value` into the PBIR
-role name (e.g. `Y`, `Values`, `Data`). Measure vs Column is inferred from the role:
-value/indicator/goal/max roles create Measure references, category/row/detail roles
-create Column references. Override with `--measure` flag if needed.
+role name (e.g. `Y`, `Values`, `Data`). Each field is written as a Column or a Measure
+reference based on what it actually is in the semantic model, checked in this order:
+
+1. The report's own semantic model on disk (`definition.pbir` -> `byPath` ->
+   `tables/*.tmdl` or `model.bim`)
+2. The live model from `pbi connect`, only for fields not found on disk
+3. A role default: slicers and table `--column` bind Columns; value, indicator and
+   goal roles bind Measures; category, row and legend bind Columns
+
+The JSON output reports `kind` and `resolved_by` per field, plus a `warnings` entry when
+a field is missing from the model (usually a typo). Force the wrapper for every field
+in one call with `--kind column` or `--kind measure`.
+
+```bash
+# Slicer on a dimension column (written as Column)
+pbi visual bind myslicer --page p1 --field "Geography[Region]"
+
+# Table mixing columns and measures (each resolved from the model)
+pbi visual bind mytable --page p1     --column "Geography[Region]" --column "Product[Name]" --value "Sales[Revenue]"
+```
 
 ## Inspecting and Updating
 

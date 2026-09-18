@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
+from typing import Any
+
 import click
 
 from pbi_cli.commands._helpers import run_command
@@ -175,6 +178,47 @@ def delete(ctx: PbiContext, click_ctx: click.Context, name: str, page: str) -> N
     )
 
 
+_KIND_OPTION = click.option(
+    "--kind",
+    type=click.Choice(["auto", "column", "measure"], case_sensitive=False),
+    default="auto",
+    show_default=True,
+    help=(
+        "Column or Measure wrapper for every field in this call. 'auto' looks each "
+        "field up in the report's semantic model (TMDL/model.bim), then the live "
+        "connection, then falls back to the role default."
+    ),
+)
+
+
+def _live_index_loader(ctx: PbiContext) -> Callable[[], Any]:
+    """Return a lazy, best-effort loader for the live model's field index.
+
+    Only called for fields missing from the on-disk semantic model, so
+    report-only workflows never open a connection.
+    """
+
+    def load() -> Any:
+        try:
+            from pbi_cli.core.field_resolver import index_from_tom
+            from pbi_cli.core.session import get_session_for_command
+
+            return index_from_tom(get_session_for_command(ctx).model)
+        except Exception:
+            return None
+
+    return load
+
+
+def _collect_bindings(kind: str, **roles: tuple[str, ...]) -> list[dict[str, str]]:
+    """Flatten ``--<role> Table[Field]`` options into binding dicts."""
+    return [
+        {"role": role, "field": ref, "kind": kind.lower()}
+        for role, refs in roles.items()
+        for ref in refs
+    ]
+
+
 @visual.command()
 @click.argument("name")
 @click.option("--page", required=True, help="Page name/ID.")
@@ -186,7 +230,7 @@ def delete(ctx: PbiContext, click_ctx: click.Context, name: str, page: str) -> N
 @click.option(
     "--value",
     multiple=True,
-    help="Value/measure: all chart types. Treated as measure. Table[Measure] format.",
+    help="Value field: all chart types, table. Table[Field] format.",
 )
 @click.option(
     "--row",
@@ -196,7 +240,7 @@ def delete(ctx: PbiContext, click_ctx: click.Context, name: str, page: str) -> N
 @click.option(
     "--field",
     multiple=True,
-    help="Data field: card, slicer. Treated as measure for cards. Table[Field] format.",
+    help="Data field: card, slicer. Table[Field] format.",
 )
 @click.option(
     "--legend",
@@ -213,6 +257,16 @@ def delete(ctx: PbiContext, click_ctx: click.Context, name: str, page: str) -> N
     multiple=True,
     help="KPI goal measure. Table[Measure] format.",
 )
+@click.option(
+    "--column",
+    "col_value",
+    multiple=True,
+    help="Table column, matrix column group, or combo column Y. Table[Field] format.",
+)
+@click.option("--line", multiple=True, help="Line Y axis for combo chart. Table[Measure].")
+@click.option("--x", "x_field", multiple=True, help="X axis for scatter chart. Table[Measure].")
+@click.option("--y", "y_field", multiple=True, help="Y axis for scatter chart. Table[Measure].")
+@_KIND_OPTION
 @click.pass_context
 @pass_context
 def bind(
@@ -227,14 +281,26 @@ def bind(
     legend: tuple[str, ...],
     indicator: tuple[str, ...],
     goal: tuple[str, ...],
+    col_value: tuple[str, ...],
+    line: tuple[str, ...],
+    x_field: tuple[str, ...],
+    y_field: tuple[str, ...],
+    kind: str,
 ) -> None:
     """Bind semantic model fields to a visual's data roles.
+
+    Each field is written as a Column or a Measure based on the semantic
+    model. Use --kind to override.
 
     Examples:
 
       pbi visual bind mychart --page p1 --category "Geo[Region]" --value "Sales[Amount]"
 
       pbi visual bind mycard --page p1 --field "Sales[Total Revenue]"
+
+      pbi visual bind myslicer --page p1 --field "Geo[Region]"
+
+      pbi visual bind mytable --page p1 --column "Geo[Region]" --value "Sales[Revenue]"
 
       pbi visual bind mymatrix --page p1 --row "Product[Category]" --value "Sales[Qty]"
 
@@ -243,26 +309,25 @@ def bind(
     from pbi_cli.core.pbir_path import resolve_report_path
     from pbi_cli.core.visual_backend import visual_bind
 
-    bindings: list[dict[str, str]] = []
-    for f in category:
-        bindings.append({"role": "category", "field": f})
-    for f in value:
-        bindings.append({"role": "value", "field": f})
-    for f in row:
-        bindings.append({"role": "row", "field": f})
-    for f in field:
-        bindings.append({"role": "field", "field": f})
-    for f in legend:
-        bindings.append({"role": "legend", "field": f})
-    for f in indicator:
-        bindings.append({"role": "indicator", "field": f})
-    for f in goal:
-        bindings.append({"role": "goal", "field": f})
+    bindings = _collect_bindings(
+        kind,
+        category=category,
+        value=value,
+        row=row,
+        field=field,
+        legend=legend,
+        indicator=indicator,
+        goal=goal,
+        column=col_value,
+        line=line,
+        x=x_field,
+        y=y_field,
+    )
 
     if not bindings:
         raise click.UsageError(
-            "At least one binding required "
-            "(--category, --value, --row, --field, --legend, --indicator, or --goal)."
+            "At least one binding required (--category, --value, --row, --field, "
+            "--legend, --indicator, --goal, --column, --line, --x, or --y)."
         )
 
     definition_path = resolve_report_path(_get_report_path(click_ctx))
@@ -273,6 +338,7 @@ def bind(
         page_name=page,
         visual_name=name,
         bindings=bindings,
+        live_index_loader=_live_index_loader(ctx),
     )
 
 
@@ -335,16 +401,19 @@ def where(
 @click.option("--type", "visual_type", required=True, help="Target PBIR visual type or alias.")
 @click.option("--name-pattern", default=None, help="Restrict to visuals matching fnmatch pattern.")
 @click.option("--category", multiple=True, help="Category/axis. Table[Column].")
-@click.option("--value", multiple=True, help="Value/measure: all chart types. Table[Measure].")
+@click.option("--value", multiple=True, help="Value field: all chart types. Table[Field].")
 @click.option("--row", multiple=True, help="Row grouping: matrix only. Table[Column].")
 @click.option("--field", multiple=True, help="Data field: card, slicer. Table[Field].")
 @click.option("--legend", multiple=True, help="Legend/series. Table[Column].")
 @click.option("--indicator", multiple=True, help="KPI indicator measure. Table[Measure].")
 @click.option("--goal", multiple=True, help="KPI goal measure. Table[Measure].")
-@click.option("--column", "col_value", multiple=True, help="Combo column Y. Table[Measure].")
+@click.option(
+    "--column", "col_value", multiple=True, help="Table column / combo column Y. Table[Field]."
+)
 @click.option("--line", multiple=True, help="Line Y axis for combo chart. Table[Measure].")
 @click.option("--x", "x_field", multiple=True, help="X axis for scatter chart. Table[Measure].")
 @click.option("--y", "y_field", multiple=True, help="Y axis for scatter chart. Table[Measure].")
+@_KIND_OPTION
 @click.pass_context
 @pass_context
 def bulk_bind(
@@ -364,6 +433,7 @@ def bulk_bind(
     line: tuple[str, ...],
     x_field: tuple[str, ...],
     y_field: tuple[str, ...],
+    kind: str,
 ) -> None:
     """Bind fields to ALL visuals of a given type on a page.
 
@@ -381,29 +451,20 @@ def bulk_bind(
     from pbi_cli.core.bulk_backend import visual_bulk_bind
     from pbi_cli.core.pbir_path import resolve_report_path
 
-    bindings: list[dict[str, str]] = []
-    for f in category:
-        bindings.append({"role": "category", "field": f})
-    for f in value:
-        bindings.append({"role": "value", "field": f})
-    for f in row:
-        bindings.append({"role": "row", "field": f})
-    for f in field:
-        bindings.append({"role": "field", "field": f})
-    for f in legend:
-        bindings.append({"role": "legend", "field": f})
-    for f in indicator:
-        bindings.append({"role": "indicator", "field": f})
-    for f in goal:
-        bindings.append({"role": "goal", "field": f})
-    for f in col_value:
-        bindings.append({"role": "column", "field": f})
-    for f in line:
-        bindings.append({"role": "line", "field": f})
-    for f in x_field:
-        bindings.append({"role": "x", "field": f})
-    for f in y_field:
-        bindings.append({"role": "y", "field": f})
+    bindings = _collect_bindings(
+        kind,
+        category=category,
+        value=value,
+        row=row,
+        field=field,
+        legend=legend,
+        indicator=indicator,
+        goal=goal,
+        column=col_value,
+        line=line,
+        x=x_field,
+        y=y_field,
+    )
 
     if not bindings:
         raise click.UsageError("At least one binding role required.")
@@ -417,6 +478,7 @@ def bulk_bind(
         visual_type=visual_type,
         bindings=bindings,
         name_pattern=name_pattern,
+        live_index_loader=_live_index_loader(ctx),
     )
 
 

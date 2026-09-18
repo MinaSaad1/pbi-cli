@@ -5,6 +5,18 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+- `pbi visual bind` no longer wraps every slicer, card and table field as a `Measure`. Slicers bound to a dimension column produced a `Measure` reference that Power BI Desktop could not resolve, so the slicer rendered broken. The same happened to columns in table visuals and to `textSlicer`, `listSlicer` and `advancedSlicerVisual` ([#19](https://github.com/MinaSaad1/pbi-cli/issues/19)).
+- Column vs Measure is now resolved per field from the semantic model: first the TMDL or `model.bim` the report's `definition.pbir` points to, then the live `pbi connect` model (opened only for fields missing on disk), then a per-visual role default in which slicers default to Column. Names are canonicalised to the model's casing, and a measure referenced under the wrong table is written against its home table.
+- Fields not found in the model produce a `warnings` entry instead of silently guessing.
+
+### Added
+- `--kind auto|column|measure` on `pbi visual bind` and `pbi visual bulk-bind` to force the wrapper.
+- `--column`, `--line`, `--x` and `--y` on `pbi visual bind`, matching `bulk-bind`. `--column` binds table columns and matrix column groups.
+- `bind` output includes `kind` and `resolved_by` for each field.
+
 ## [3.11.2] - 2026-05-07
 
 ### Fixed

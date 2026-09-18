@@ -11,9 +11,11 @@ report layer: takes a ``definition_path: Path`` and returns a plain dict.
 from __future__ import annotations
 
 import fnmatch
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
+from pbi_cli.core.field_resolver import FieldIndex, index_from_report
 from pbi_cli.core.visual_backend import (
     VISUAL_DATA_ROLES,
     _resolve_visual_type,
@@ -82,6 +84,7 @@ def visual_bulk_bind(
     visual_type: str,
     bindings: list[dict[str, str]],
     name_pattern: str | None = None,
+    live_index_loader: Callable[[], FieldIndex | None] | None = None,
 ) -> dict[str, Any]:
     """Bind fields to every visual of a given type on a page.
 
@@ -95,6 +98,8 @@ def visual_bulk_bind(
         bindings: List of ``{"role": ..., "field": ...}`` dicts, same format as
             ``visual_bind()``.
         name_pattern: Optional fnmatch filter on visual name.
+        live_index_loader: Optional lazy loader for the live model's field
+            index, forwarded to ``visual_bind()``.
 
     Returns:
         ``{"bound": N, "page": page_name, "type": resolved_type, "visuals": [names],
@@ -106,9 +111,26 @@ def visual_bulk_bind(
         visual_type=visual_type,
         name_pattern=name_pattern,
     )
+    field_index = index_from_report(definition_path)
+    live_cache: list[FieldIndex | None] = []
+
+    def cached_live() -> FieldIndex | None:
+        if live_index_loader is None:
+            return None
+        if not live_cache:
+            live_cache.append(live_index_loader())
+        return live_cache[0]
+
     bound_names: list[str] = []
     for v in matching:
-        visual_bind(definition_path, page_name, v["name"], bindings)
+        visual_bind(
+            definition_path,
+            page_name,
+            v["name"],
+            bindings,
+            field_index=field_index,
+            live_index_loader=cached_live,
+        )
         bound_names.append(v["name"])
 
     resolved_type = _resolve_visual_type(visual_type)
