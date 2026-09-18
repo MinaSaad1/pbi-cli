@@ -191,6 +191,33 @@ _KIND_OPTION = click.option(
 )
 
 
+_AGGREGATION_OPTION = click.option(
+    "--aggregation",
+    type=click.Choice(
+        [
+            "sum",
+            "average",
+            "avg",
+            "count",
+            "distinct-count",
+            "min",
+            "max",
+            "median",
+            "stdev",
+            "variance",
+            "none",
+        ],
+        case_sensitive=False,
+    ),
+    default=None,
+    help=(
+        "Aggregation for columns in this call. By default a column in a value role "
+        "uses its model summarizeBy (Sum for numbers, Count for text on charts). "
+        "'none' keeps the column un-aggregated."
+    ),
+)
+
+
 def _live_index_loader(ctx: PbiContext) -> Callable[[], Any]:
     """Return a lazy, best-effort loader for the live model's field index.
 
@@ -210,13 +237,18 @@ def _live_index_loader(ctx: PbiContext) -> Callable[[], Any]:
     return load
 
 
-def _collect_bindings(kind: str, **roles: tuple[str, ...]) -> list[dict[str, str]]:
+def _collect_bindings(
+    kind: str, aggregation: str | None, **roles: tuple[str, ...]
+) -> list[dict[str, str]]:
     """Flatten ``--<role> Table[Field]`` options into binding dicts."""
-    return [
-        {"role": role, "field": ref, "kind": kind.lower()}
-        for role, refs in roles.items()
-        for ref in refs
-    ]
+    bindings: list[dict[str, str]] = []
+    for role, refs in roles.items():
+        for ref in refs:
+            binding = {"role": role, "field": ref, "kind": kind.lower()}
+            if aggregation:
+                binding["aggregation"] = aggregation.lower()
+            bindings.append(binding)
+    return bindings
 
 
 @visual.command()
@@ -267,6 +299,7 @@ def _collect_bindings(kind: str, **roles: tuple[str, ...]) -> list[dict[str, str
 @click.option("--x", "x_field", multiple=True, help="X axis for scatter chart. Table[Measure].")
 @click.option("--y", "y_field", multiple=True, help="Y axis for scatter chart. Table[Measure].")
 @_KIND_OPTION
+@_AGGREGATION_OPTION
 @click.pass_context
 @pass_context
 def bind(
@@ -286,11 +319,13 @@ def bind(
     x_field: tuple[str, ...],
     y_field: tuple[str, ...],
     kind: str,
+    aggregation: str | None,
 ) -> None:
     """Bind semantic model fields to a visual's data roles.
 
     Each field is written as a Column or a Measure based on the semantic
-    model. Use --kind to override.
+    model, and columns in value roles get Desktop's implicit aggregation
+    (e.g. Sum of Amount). Use --kind and --aggregation to override.
 
     Examples:
 
@@ -302,6 +337,9 @@ def bind(
 
       pbi visual bind mytable --page p1 --column "Geo[Region]" --value "Sales[Revenue]"
 
+      pbi visual bind mybar --page p1 --category "Geo[Region]" --value "Sales[Qty]" \
+          --aggregation average
+
       pbi visual bind mymatrix --page p1 --row "Product[Category]" --value "Sales[Qty]"
 
       pbi visual bind mykpi --page p1 --indicator "Sales[Revenue]" --goal "Sales[Target]"
@@ -311,6 +349,7 @@ def bind(
 
     bindings = _collect_bindings(
         kind,
+        aggregation,
         category=category,
         value=value,
         row=row,
@@ -414,6 +453,7 @@ def where(
 @click.option("--x", "x_field", multiple=True, help="X axis for scatter chart. Table[Measure].")
 @click.option("--y", "y_field", multiple=True, help="Y axis for scatter chart. Table[Measure].")
 @_KIND_OPTION
+@_AGGREGATION_OPTION
 @click.pass_context
 @pass_context
 def bulk_bind(
@@ -434,6 +474,7 @@ def bulk_bind(
     x_field: tuple[str, ...],
     y_field: tuple[str, ...],
     kind: str,
+    aggregation: str | None,
 ) -> None:
     """Bind fields to ALL visuals of a given type on a page.
 
@@ -453,6 +494,7 @@ def bulk_bind(
 
     bindings = _collect_bindings(
         kind,
+        aggregation,
         category=category,
         value=value,
         row=row,

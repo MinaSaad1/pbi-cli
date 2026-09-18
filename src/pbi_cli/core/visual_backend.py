@@ -15,7 +15,14 @@ from pathlib import Path
 from typing import Any
 
 from pbi_cli.core.errors import PbiCliError, VisualTypeError
-from pbi_cli.core.field_resolver import FieldIndex, index_from_report
+from pbi_cli.core.field_resolver import (
+    AGGREGATE_FUNCTIONS,
+    AGGREGATE_LABELS,
+    FieldIndex,
+    ResolvedField,
+    index_from_report,
+    parse_aggregation,
+)
 from pbi_cli.core.pbir_models import (
     SUPPORTED_VISUAL_TYPES,
     VISUAL_TYPE_ALIASES,
@@ -116,6 +123,12 @@ SLICER_VISUAL_TYPES: frozenset[str] = frozenset(
 
 _VALID_KINDS = frozenset({"auto", "column", "measure"})
 
+# Visuals whose value roles show a non-summarizable column as-is (a text
+# column in a table or card). Everywhere else Desktop falls back to Count.
+RAW_COLUMN_VISUAL_TYPES: frozenset[str] = frozenset(
+    {"tableEx", "card", "multiRowCard", "cardNew", "cardVisual"}
+)
+
 
 def _default_is_measure(visual_type: str, user_role: str, pbir_role: str) -> bool:
     """Fallback Column/Measure guess when the semantic model can't be consulted."""
@@ -125,6 +138,24 @@ def _default_is_measure(visual_type: str, user_role: str, pbir_role: str) -> boo
         # Table "Values" mixes both; trust the flag the user picked.
         return user_role == "value"
     return pbir_role in MEASURE_ROLES
+
+
+def _implicit_aggregation(
+    visual_type: str,
+    pbir_role: str,
+    hit: ResolvedField | None,
+) -> int | None:
+    """Aggregation Desktop would apply to a model column in this role.
+
+    Only value roles aggregate, and slicers never do. Without model metadata
+    the column is left as-is.
+    """
+    if hit is None or visual_type in SLICER_VISUAL_TYPES or pbir_role not in MEASURE_ROLES:
+        return None
+    function = hit.default_aggregation()
+    if function is None and visual_type not in RAW_COLUMN_VISUAL_TYPES:
+        return AGGREGATE_FUNCTIONS["count"]
+    return function
 
 
 # User-friendly role aliases to PBIR role names
@@ -572,6 +603,8 @@ def visual_bind(
       - ``field``: Field reference in ``Table[Column]`` notation
       - ``kind``: (optional) ``"column"``, ``"measure"`` or ``"auto"`` (default)
       - ``measure``: (optional, legacy) bool, same as ``kind="measure"``
+      - ``aggregation``: (optional) ``sum``, ``average``, ``count``, ``none``...
+        for a column; overrides the implicit aggregation
 
     Roles are resolved through ``ROLE_ALIASES`` to the actual PBIR role name.
     With ``kind="auto"`` the Column/Measure wrapper is decided by, in order:
@@ -579,6 +612,11 @@ def visual_bind(
     1. ``field_index`` (defaults to the TMDL / model.bim the report points to)
     2. ``live_index_loader`` (called lazily, only for fields step 1 missed)
     3. A per-visual default: slicers bind columns, value roles bind measures
+
+    A model column placed in a value role (chart Y, matrix values, table
+    values...) is wrapped in the aggregation Desktop would apply: its
+    ``summarizeBy``, else Sum for numeric columns. Non-summarizable columns
+    fall back to Count, except in tables and cards where they stay as-is.
     """
     visual_dir = get_visual_dir(definition_path, page_name, visual_name)
     vfile = visual_dir / "visual.json"
@@ -616,6 +654,8 @@ def visual_bind(
         # Parse Table[Column]
         table, column = _parse_field_ref(field_ref)
 
+        requested_agg = binding.get("aggregation")
+        hit: ResolvedField | None = None
         if kind != "auto":
             is_measure = kind == "measure"
             resolved_by = "explicit"
@@ -643,8 +683,22 @@ def visual_bind(
                         "Check the name or pass --kind to override."
                     )
 
+        # Aggregation for columns in value roles
+        function: int | None = None
+        if requested_agg:
+            if is_measure:
+                warnings.append(
+                    f"--aggregation ignored for '{field_ref}': measures are already aggregated."
+                )
+            else:
+                try:
+                    function = parse_aggregation(str(requested_agg))
+                except ValueError as e:
+                    raise PbiCliError(str(e)) from e
+        elif not is_measure:
+            function = _implicit_aggregation(visual_type, pbir_role, hit)
+
         # Build queryState projection (uses Entity directly, matching Desktop)
-        query_ref = f"{table}.{column}"
         wrapper = "Measure" if is_measure else "Column"
         field_expr: dict[str, Any] = {
             wrapper: {
@@ -652,28 +706,36 @@ def visual_bind(
                 "Property": column,
             }
         }
+        query_ref = f"{table}.{column}"
+        native_ref = column
+        if function is not None:
+            prefix, label = AGGREGATE_LABELS[function]
+            field_expr = {"Aggregation": {"Expression": field_expr, "Function": function}}
+            query_ref = f"{prefix}({table}.{column})"
+            native_ref = f"{label} {column}"
 
         projection: dict[str, Any] = {
             "field": field_expr,
             "queryRef": query_ref,
-            "nativeQueryRef": column,
+            "nativeQueryRef": native_ref,
         }
-        if not is_measure:
+        if not is_measure and function is None:
             projection["active"] = True
 
         # Add to query state
         role_state = query_state.setdefault(pbir_role, {"projections": []})
         role_state["projections"].append(projection)
 
-        applied.append(
-            {
-                "role": pbir_role,
-                "field": field_ref,
-                "query_ref": query_ref,
-                "kind": wrapper,
-                "resolved_by": resolved_by,
-            }
-        )
+        entry = {
+            "role": pbir_role,
+            "field": field_ref,
+            "query_ref": query_ref,
+            "kind": wrapper,
+            "resolved_by": resolved_by,
+        }
+        if function is not None:
+            entry["aggregation"] = AGGREGATE_LABELS[function][0]
+        applied.append(entry)
 
     data["visual"] = visual_config
     _write_json(vfile, data)
@@ -712,6 +774,10 @@ def _parse_field_ref(ref: str) -> tuple[str, str]:
 
 def _summarize_field(field: dict[str, Any]) -> str:
     """Produce a human-readable summary of a query field expression."""
+    if "Aggregation" in field:
+        agg = field["Aggregation"]
+        prefix = AGGREGATE_LABELS.get(agg.get("Function", -1), ("Agg", ""))[0]
+        return f"{prefix}({_summarize_field(agg.get('Expression', {}))})"
     for kind in ("Column", "Measure"):
         if kind in field:
             item = field[kind]

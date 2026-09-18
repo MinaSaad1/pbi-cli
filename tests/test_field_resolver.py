@@ -49,6 +49,18 @@ SALES_TMDL = """table Sales
 
 \tcolumn Amount
 \t\tdataType: double
+\t\tsummarizeBy: sum
+
+\tcolumn Price
+\t\tdataType: decimal
+\t\tsummarizeBy: average
+
+\tcolumn Year
+\t\tdataType: int64
+\t\tsummarizeBy: none
+
+\tcolumn Qty
+\t\tdataType: int64
 
 \tpartition Sales = m
 \t\tmode: import
@@ -120,7 +132,7 @@ def test_tmdl_index_ignores_text_inside_expressions(pbip: Path) -> None:
     index = index_from_tmdl_dir(pbip.parent.parent / "Test.SemanticModel" / "definition")
     assert index.lookup("Sales", "Fake") is None
     assert index.lookup("Sales", "column") is None
-    assert len(index) == 7  # 5 columns + 2 measures in Sales, 1 measure in _Measures
+    assert len(index) == 10  # 7 columns + 2 measures in Sales, 1 measure in _Measures
 
 
 def test_lookup_is_case_insensitive_and_returns_canonical_names(pbip: Path) -> None:
@@ -446,8 +458,10 @@ def test_cli_bind_uses_live_model_when_disk_model_is_blank(
         "Sales[Total Sales]",
     )
     assert result.exit_code == 0, result.output
-    kinds = [_kind(p) for p in _projection(blank_pbip, "page1", "c", "Values")]
-    assert kinds == ["Column", "Measure"]
+    projections = _projection(blank_pbip, "page1", "c", "Values")
+    # Amount is a numeric column, so the card sums it like Desktop does.
+    assert [_kind(p) for p in projections] == ["Aggregation", "Measure"]
+    assert projections[0]["queryRef"] == "Sum(Sales.Amount)"
 
 
 def test_cli_bulk_bind_kind(cli_runner: CliRunner, blank_pbip: Path, tmp_connections: Path) -> None:
@@ -467,3 +481,198 @@ def test_cli_bulk_bind_kind(cli_runner: CliRunner, blank_pbip: Path, tmp_connect
     )
     assert result.exit_code == 0, result.output
     assert _kind(_projection(blank_pbip, "page1", "c1", "Values")[0]) == "Column"
+
+
+# ---------------------------------------------------------------------------
+# Implicit aggregation for columns in value roles
+# ---------------------------------------------------------------------------
+
+
+def test_tmdl_captures_data_type_and_summarize_by(pbip: Path) -> None:
+    index = index_from_report(pbip)
+    assert index is not None
+    amount = index.lookup("Sales", "Amount")
+    assert amount is not None
+    assert (amount.data_type, amount.summarize_by) == ("double", "sum")
+    region = index.lookup("Sales", "Region")
+    assert region is not None
+    assert (region.data_type, region.summarize_by) == ("string", "")
+
+
+@pytest.mark.parametrize(
+    ("field", "function", "query_ref", "native"),
+    [
+        ("Sales[Amount]", 0, "Sum(Sales.Amount)", "Sum of Amount"),
+        ("Sales[Price]", 1, "Avg(Sales.Price)", "Average of Price"),
+        ("Sales[Qty]", 0, "Sum(Sales.Qty)", "Sum of Qty"),  # numeric, unset -> Sum
+        ("Sales[Region]", 5, "Count(Sales.Region)", "Count of Region"),  # text on chart
+        ("Sales[Year]", 5, "Count(Sales.Year)", "Count of Year"),  # summarizeBy none
+    ],
+)
+def test_chart_value_column_gets_desktop_aggregation(
+    pbip: Path, field: str, function: int, query_ref: str, native: str
+) -> None:
+    visual_add(pbip, "page1", "bar", name="b")
+    result = visual_bind(pbip, "page1", "b", [{"role": "value", "field": field}])
+    proj = _projection(pbip, "page1", "b", "Y")[0]
+    assert proj["field"]["Aggregation"]["Function"] == function
+    inner = proj["field"]["Aggregation"]["Expression"]["Column"]
+    assert inner["Expression"]["SourceRef"]["Entity"] == "Sales"
+    assert proj["queryRef"] == query_ref
+    assert proj["nativeQueryRef"] == native
+    assert "active" not in proj
+    assert result["bindings"][0]["aggregation"] == query_ref.split("(")[0]
+
+
+def test_category_column_is_never_aggregated(pbip: Path) -> None:
+    visual_add(pbip, "page1", "bar", name="b")
+    visual_bind(pbip, "page1", "b", [{"role": "category", "field": "Sales[Amount]"}])
+    assert _kind(_projection(pbip, "page1", "b", "Category")[0]) == "Column"
+
+
+def test_slicer_numeric_column_is_never_aggregated(pbip: Path) -> None:
+    visual_add(pbip, "page1", "slicer", name="s")
+    visual_bind(pbip, "page1", "s", [{"role": "field", "field": "Sales[Amount]"}])
+    assert _kind(_projection(pbip, "page1", "s", "Values")[0]) == "Column"
+
+
+def test_table_sums_numbers_and_keeps_text_raw(pbip: Path) -> None:
+    visual_add(pbip, "page1", "table", name="t")
+    visual_bind(
+        pbip,
+        "page1",
+        "t",
+        [
+            {"role": "column", "field": "Sales[Region]"},
+            {"role": "column", "field": "Sales[Year]"},
+            {"role": "column", "field": "Sales[Amount]"},
+            {"role": "value", "field": "Sales[Total Revenue]"},
+        ],
+    )
+    refs = [p["queryRef"] for p in _projection(pbip, "page1", "t", "Values")]
+    assert refs == ["Sales.Region", "Sales.Year", "Sum(Sales.Amount)", "Sales.Total Revenue"]
+
+
+def test_matrix_values_count_text_columns(pbip: Path) -> None:
+    visual_add(pbip, "page1", "matrix", name="m")
+    visual_bind(
+        pbip,
+        "page1",
+        "m",
+        [
+            {"role": "row", "field": "Sales[Region]"},
+            {"role": "value", "field": "Sales[Region]"},
+        ],
+    )
+    assert _kind(_projection(pbip, "page1", "m", "Rows")[0]) == "Column"
+    assert _projection(pbip, "page1", "m", "Values")[0]["queryRef"] == "Count(Sales.Region)"
+
+
+def test_card_text_column_stays_raw(pbip: Path) -> None:
+    visual_add(pbip, "page1", "card", name="c")
+    visual_bind(pbip, "page1", "c", [{"role": "field", "field": "Sales[Region]"}])
+    assert _kind(_projection(pbip, "page1", "c", "Values")[0]) == "Column"
+
+
+def test_measures_are_never_wrapped(pbip: Path) -> None:
+    visual_add(pbip, "page1", "bar", name="b")
+    visual_bind(pbip, "page1", "b", [{"role": "value", "field": "Sales[Total Revenue]"}])
+    assert _kind(_projection(pbip, "page1", "b", "Y")[0]) == "Measure"
+
+
+def test_no_metadata_leaves_column_raw(blank_pbip: Path) -> None:
+    visual_add(blank_pbip, "page1", "bar", name="b")
+    visual_bind(
+        blank_pbip, "page1", "b", [{"role": "value", "field": "Geo[Pop]", "kind": "column"}]
+    )
+    assert _kind(_projection(blank_pbip, "page1", "b", "Y")[0]) == "Column"
+
+
+@pytest.mark.parametrize(
+    ("aggregation", "function"),
+    [("max", 4), ("avg", 1), ("distinct-count", 2), ("median", 6), ("stdev", 7)],
+)
+def test_explicit_aggregation_override(pbip: Path, aggregation: str, function: int) -> None:
+    visual_add(pbip, "page1", "bar", name="b")
+    visual_bind(
+        pbip,
+        "page1",
+        "b",
+        [{"role": "value", "field": "Sales[Amount]", "aggregation": aggregation}],
+    )
+    assert _projection(pbip, "page1", "b", "Y")[0]["field"]["Aggregation"]["Function"] == function
+
+
+def test_explicit_aggregation_none_keeps_column(pbip: Path) -> None:
+    visual_add(pbip, "page1", "bar", name="b")
+    visual_bind(
+        pbip, "page1", "b", [{"role": "value", "field": "Sales[Amount]", "aggregation": "none"}]
+    )
+    proj = _projection(pbip, "page1", "b", "Y")[0]
+    assert _kind(proj) == "Column"
+    assert proj["active"] is True
+
+
+def test_explicit_aggregation_on_measure_warns(pbip: Path) -> None:
+    visual_add(pbip, "page1", "bar", name="b")
+    result = visual_bind(
+        pbip,
+        "page1",
+        "b",
+        [{"role": "value", "field": "Sales[Total Revenue]", "aggregation": "sum"}],
+    )
+    assert _kind(_projection(pbip, "page1", "b", "Y")[0]) == "Measure"
+    assert "ignored" in result["warnings"][0]
+
+
+def test_invalid_aggregation_raises(pbip: Path) -> None:
+    visual_add(pbip, "page1", "bar", name="b")
+    with pytest.raises(PbiCliError, match="Unknown aggregation"):
+        visual_bind(
+            pbip, "page1", "b", [{"role": "value", "field": "Sales[Amount]", "aggregation": "x"}]
+        )
+
+
+def test_visual_get_summarizes_aggregation() -> None:
+    from pbi_cli.core.visual_backend import _summarize_field
+
+    field = {
+        "Aggregation": {
+            "Expression": {
+                "Column": {"Expression": {"SourceRef": {"Entity": "Sales"}}, "Property": "Amount"}
+            },
+            "Function": 0,
+        }
+    }
+    assert _summarize_field(field) == "Sum(Sales.Amount)"
+
+
+def test_index_from_tom_reads_summarize_by(mock_session: Any) -> None:
+    col = next(iter(next(iter(mock_session.model.Tables)).Columns))
+    col.SummarizeBy = "Average"
+    index = index_from_tom(mock_session.model)
+    hit = index.lookup("Sales", "Amount")
+    assert hit is not None
+    assert hit.default_aggregation() == 1
+
+
+def test_cli_bind_aggregation_option(
+    cli_runner: CliRunner, pbip: Path, tmp_connections: Path
+) -> None:
+    _invoke(cli_runner, pbip, "add", "--page", "page1", "--type", "bar", "--name", "b")
+    result = _invoke(
+        cli_runner,
+        pbip,
+        "bind",
+        "b",
+        "--page",
+        "page1",
+        "--category",
+        "Sales[Region]",
+        "--value",
+        "Sales[Amount]",
+        "--aggregation",
+        "max",
+    )
+    assert result.exit_code == 0, result.output
+    assert _projection(pbip, "page1", "b", "Y")[0]["queryRef"] == "Max(Sales.Amount)"
