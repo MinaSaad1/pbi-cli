@@ -267,6 +267,7 @@ Three new pbi-cli commands support the loop:
 ## All Commands
 
 27 command groups covering both the semantic model and the report layer.
+Every command below is a `pbi` subcommand, except where the `pbi-cli` prefix is shown.
 
 | Category | Commands |
 |----------|----------|
@@ -283,7 +284,8 @@ Three new pbi-cli commands support the loop:
 | **Filters** | `filters list`, `filters add-categorical/add-topn/add-relative-date`, `filters remove/clear` |
 | **Formatting** | `format get/clear`, `format background-gradient/background-conditional/background-measure` |
 | **Bookmarks** | `bookmarks list/get/add/delete/set-visibility` |
-| **Tools** | `setup`, `repl`, `skills install/list/uninstall` |
+| **Tools** | `setup`, `repl` |
+| **Setup** | `pbi-cli skills install/list/uninstall` (on the `pbi-cli` command, not `pbi`) |
 
 Use `--json` for machine-readable output (for scripts and AI agents):
 
@@ -366,3 +368,18 @@ Contributions are welcome! Please open an issue first to discuss what you'd like
 <p align="center">
   <sub>MIT License — bundled Microsoft DLLs are licensed separately, see <a href="THIRD_PARTY_LICENSES.md">THIRD_PARTY_LICENSES.md</a></sub>
 </p>
+
+---
+
+## About
+
+pbi-cli is built and maintained by [Mina Saad](https://www.mina-saad.com/pbi-cli). It started as a
+fix for the slowest part of my own job: authoring a measure meant a dialog, a
+refresh, and a visual check, every time.
+
+If your team has the same problem one layer up, that is the work I do.
+
+I work out what is actually costing a business, then build whatever fixes it: an
+AI agent, an automation, or a full application. Handed over so your team owns it.
+
+[Book a call](https://cal.com/minasaad/60min) · [mina-saad.com](https://www.mina-saad.com)

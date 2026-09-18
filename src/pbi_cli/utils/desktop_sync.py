@@ -19,10 +19,19 @@ Requires pywin32.
 
 from __future__ import annotations
 
+import json
 import subprocess
 import time
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 from typing import Any
+
+# How long to wait for the save prompt to appear after WM_CLOSE. Desktop can be
+# slow to raise it when busy (e.g. immediately after a table refresh).
+DIALOG_TIMEOUT = 60.0
+# How long to wait for the process to exit once the prompt has been accepted.
+# Saving a large model routinely exceeds a minute.
+CLOSE_TIMEOUT = 600.0
+POLL_INTERVAL = 0.5
 
 
 def sync_desktop(
@@ -127,6 +136,49 @@ def _restore_snapshots(snapshots: dict[Path, bytes]) -> list[str]:
 # ---------------------------------------------------------------------------
 
 
+def _hint_tokens(pbip_hint: str | Path) -> set[str]:
+    """Lowercased name tokens from a hint path: its stem plus every directory name.
+
+    The hint reaching ``sync_desktop`` from the report layer is a ``.Report`` folder,
+    not a ``.pbip``. Its stem is therefore the *report* name, which need not resemble
+    the project name at all -- so matching on the stem alone silently discards the
+    correct process. Including the ancestor directory names lets the usual layouts
+    (``<Project>/<Project>.Report`` and thin-report repos that nest reports under a
+    project folder) resolve, while keeping the hint a real filter.
+
+    Paths are parsed with Windows semantics on every platform. This module only
+    runs on Windows, and ``PureWindowsPath`` splits on both separators, so a
+    backslash literal in a test means on a POSIX CI runner what it means here.
+
+    The drive anchor and single-character names are dropped: they carry no
+    project identity and would only widen the match.
+    """
+    p = PureWindowsPath(str(pbip_hint))
+    parts = p.parts[1:] if p.anchor else p.parts
+    tokens = {part.lower().strip() for part in parts}
+    # A ".Report" folder's stem keeps a trailing space in some exports; normalise.
+    tokens.add(p.stem.lower().strip())
+    return {t for t in tokens if len(t) > 1}
+
+
+def _hint_matches(hint_parts: set[str], pbip_path: str) -> bool:
+    """True when the open .pbip belongs to the hinted project.
+
+    The comparison is exact. Substring matching in either direction looked
+    permissive in a good way, but every ancestor directory is a token, so
+    ordinary path components became live matchers: a username directory made
+    ``Mina_Test.pbip`` match a hint under ``C:/Users/mina/``, and a project
+    named ``Sales`` matched ``Salesforce_Extract.pbip``.
+
+    That is not a wrong answer, it is a wrong *process*. ``_find_desktop_process``
+    hands its first match to ``_close_with_save``, which force-closes and saves
+    it -- so a loose predicate here restarts somebody else's Desktop session and
+    reopens the wrong .pbip. Failing to match is recoverable ("not running");
+    matching the wrong instance is not.
+    """
+    return PureWindowsPath(pbip_path).stem.lower().strip() in hint_parts
+
+
 def _find_desktop_process(
     pbip_hint: str | Path | None,
 ) -> dict[str, Any] | None:
@@ -134,9 +186,9 @@ def _find_desktop_process(
     import win32gui
     import win32process
 
-    hint_stem = None
+    hint_parts: set[str] | None = None
     if pbip_hint is not None:
-        hint_stem = Path(pbip_hint).stem.lower()
+        hint_parts = _hint_tokens(pbip_hint)
 
     matches: list[dict[str, Any]] = []
 
@@ -160,8 +212,8 @@ def _find_desktop_process(
         if pbip_path is None:
             return True
 
-        if hint_stem is not None:
-            if hint_stem not in Path(pbip_path).stem.lower():
+        if hint_parts is not None:
+            if not _hint_matches(hint_parts, pbip_path):
                 return True
 
         matches.append(
@@ -183,40 +235,62 @@ def _find_desktop_process(
     return matches[0] if matches else None
 
 
+_PS_PROCESS_QUERY = (
+    '$p = Get-CimInstance Win32_Process -Filter "ProcessId=%d"; '
+    "if ($p) { [pscustomobject]@{ exe = $p.ExecutablePath; cmd = $p.CommandLine } "
+    "| ConvertTo-Json -Compress }"
+)
+
+
 def _get_process_info(pid: int) -> dict[str, str] | None:
-    """Get exe path and .pbip file from a process command line via wmic."""
+    """Get exe path and .pbip file from a process command line.
+
+    Uses PowerShell's ``Get-CimInstance Win32_Process`` rather than ``wmic``.
+    WMIC was deprecated in 2021 and is **no longer present** on Windows 11
+    24H2 and later, so the previous implementation raised ``FileNotFoundError``
+    for every process. Because the failure was swallowed, discovery silently
+    returned no matches and ``sync_desktop`` reported "Power BI Desktop is not
+    running" while it was plainly running.
+    """
     try:
         out = subprocess.check_output(
             [
-                "wmic",
-                "process",
-                "where",
-                f"ProcessId={pid}",
-                "get",
-                "ExecutablePath,CommandLine",
-                "/format:list",
+                "powershell",
+                "-NoProfile",
+                "-NonInteractive",
+                "-Command",
+                _PS_PROCESS_QUERY % pid,
             ],
             text=True,
             stderr=subprocess.DEVNULL,
-            timeout=5,
+            timeout=15,
         )
     except Exception:
         return None
 
-    result: dict[str, str] = {}
-    for line in out.strip().split("\n"):
-        line = line.strip()
-        if line.startswith("ExecutablePath="):
-            result["exe"] = line[15:]
-        elif line.startswith("CommandLine="):
-            cmd = line[12:]
-            for part in cmd.split('"'):
-                part = part.strip()
-                if part.lower().endswith(".pbip"):
-                    result["pbip"] = part
-                    break
+    out = out.strip()
+    if not out:
+        return None
 
-    return result if "exe" in result else None
+    try:
+        data = json.loads(out)
+    except (ValueError, TypeError):
+        return None
+    if not isinstance(data, dict):
+        return None
+
+    exe = data.get("exe")
+    if not exe:
+        return None
+
+    result: dict[str, str] = {"exe": str(exe)}
+    for part in str(data.get("cmd") or "").split('"'):
+        part = part.strip()
+        if part.lower().endswith(".pbip"):
+            result["pbip"] = part
+            break
+
+    return result
 
 
 # ---------------------------------------------------------------------------
@@ -233,44 +307,40 @@ def _close_with_save(hwnd: int, pid: int) -> dict[str, Any] | None:
     import win32gui
 
     win32gui.PostMessage(hwnd, win32con.WM_CLOSE, 0, 0)
-    time.sleep(2)
 
-    # Accept the save dialog (Enter = Save, which is the default button)
-    _accept_save_dialog()
+    # Poll for the save dialog rather than assuming it is up after a fixed wait.
+    _accept_save_dialog(pid)
 
-    # Wait for process to exit (up to 20 seconds -- saving can take time)
-    for _ in range(40):
-        if not _process_alive(pid):
-            return None
-        time.sleep(0.5)
+    # Then wait for the process to actually exit. Writing a large model can take
+    # minutes -- Desktop shows a "Working on it" dialog throughout -- so this is
+    # deliberately generous; the previous 20s deadline expired mid-save.
+    deadline = time.monotonic() + CLOSE_TIMEOUT
+    while _process_alive(pid):
+        if time.monotonic() >= deadline:
+            return {
+                "status": "error",
+                "method": "pywin32",
+                "message": (
+                    f"Power BI Desktop did not close within {CLOSE_TIMEOUT:.0f} seconds. "
+                    "Please save and close manually, then reopen the .pbip file."
+                ),
+            }
+        time.sleep(POLL_INTERVAL)
 
-    return {
-        "status": "error",
-        "method": "pywin32",
-        "message": (
-            "Power BI Desktop did not close within 20 seconds. "
-            "Please save and close manually, then reopen the .pbip file."
-        ),
-    }
+    return None
 
 
-def _accept_save_dialog() -> None:
-    """Find and accept the save dialog by pressing Enter (Save is default).
-
-    After WM_CLOSE, Power BI Desktop shows a dialog:
-      [Save]  [Don't Save]  [Cancel]
-    'Save' is the default focused button, so Enter clicks it.
-    """
+def _save_dialog_present() -> bool:
+    """True when Desktop's [Save] [Don't Save] [Cancel] prompt is on screen."""
     import win32gui
 
-    dialog_found = False
+    found = False
 
     def callback(hwnd: int, _: Any) -> bool:
-        nonlocal dialog_found
+        nonlocal found
         if win32gui.IsWindowVisible(hwnd):
-            title = win32gui.GetWindowText(hwnd)
-            if title == "Microsoft Power BI Desktop":
-                dialog_found = True
+            if win32gui.GetWindowText(hwnd) == "Microsoft Power BI Desktop":
+                found = True
         return True
 
     try:
@@ -278,8 +348,36 @@ def _accept_save_dialog() -> None:
     except Exception:
         pass
 
-    if not dialog_found:
-        return
+    return found
+
+
+def _accept_save_dialog(pid: int | None = None, timeout: float = DIALOG_TIMEOUT) -> None:
+    """Wait for the save dialog to appear, then accept it (Enter = Save).
+
+    After WM_CLOSE, Power BI Desktop shows a dialog:
+      [Save]  [Don't Save]  [Cancel]
+    'Save' is the default focused button, so Enter clicks it.
+
+    The dialog is POLLED rather than checked once. Desktop does not raise it
+    promptly when it is busy — notably straight after a table refresh — and a
+    single check meant the prompt could appear *after* we looked, so no key was
+    ever sent and the caller then waited out its timeout on a dialog nobody had
+    answered. That failure was silent: the dialog is the only thing that can
+    complete the close, so missing it strands the save entirely.
+
+    Polling alone has a third outcome to account for, and it is the common one:
+    Desktop with nothing to save closes on WM_CLOSE without ever prompting.
+    Without *pid* the loop cannot tell that from a late dialog and burns the
+    whole timeout -- 60s where the fixed-sleep version took 2s. Watching the
+    process closes that gap.
+    """
+    deadline = time.monotonic() + timeout
+    while not _save_dialog_present():
+        if pid is not None and not _process_alive(pid):
+            return  # closed cleanly; there was nothing to save
+        if time.monotonic() >= deadline:
+            return
+        time.sleep(POLL_INTERVAL)
 
     try:
         shell = _get_wscript_shell()

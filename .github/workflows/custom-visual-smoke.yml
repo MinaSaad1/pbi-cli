@@ -59,6 +59,15 @@ jobs:
           # brings the full loader chain into ./node_modules, so webpack
           # resolves ts-loader the way pbiviz expects.
           npm install --save-dev --no-audit --no-fund "powerbi-visuals-tools@${PBIVIZ_VERSION}"
+          # The scaffold doesn't pin @types/node, so a transitive install
+          # pulls the latest major (>=22.7 / 24.x). Those defs reference
+          # IteratorObject / AsyncIteratorObject / BuiltinIteratorReturn,
+          # which require a newer TypeScript than the scaffold bundles -- so
+          # `tsc --noEmit` fails with "Cannot find name 'BuiltinIteratorReturn'"
+          # and the Readable/Duplex/Dir stream mismatches. Pin @types/node to
+          # the line matching this job's Node runtime (20) so the type-check
+          # is stable. Bump this together with node-version above.
+          npm install --save-dev --no-audit --no-fund "@types/node@^20"
 
       - name: Fill required pbiviz.json metadata
         shell: bash
