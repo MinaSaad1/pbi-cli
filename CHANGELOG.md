@@ -21,7 +21,9 @@ First PyPI release since 3.11.1, so it also ships the 3.11.2 fixes below.
 - `bind` output includes `kind` and `resolved_by` for each field.
 - `--aggregation sum|average|count|distinct-count|min|max|median|stdev|variance|none` on `pbi visual bind` and `bulk-bind` to override the implicit aggregation. Function codes follow Microsoft's PBIR semanticQuery schema.
 
-## [3.11.2] - 2026-08-20
+## [3.11.2] - Unreleased
+
+Never published to PyPI. These changes first shipped in 3.12.0.
 
 ### Fixed
 - `pbi report reload` is no longer a silent no-op on Windows 11 24H2 and later. Process discovery shelled out to `wmic`, which Microsoft removed from current Windows, so every lookup raised `FileNotFoundError`. The bare `except` swallowed it and `sync_desktop` reported "Power BI Desktop is not running" while it was plainly running. Now uses PowerShell's `Get-CimInstance Win32_Process` and parses JSON, so command lines containing quotes survive intact ([#17](https://github.com/MinaSaad1/pbi-cli/pull/17), thanks [@BMATPowerBI](https://github.com/BMATPowerBI)).
@@ -31,12 +33,14 @@ First PyPI release since 3.11.1, so it also ships the 3.11.2 fixes below.
 - `power-bi-report` skill no longer claims `pbi report reload` "sends a keyboard shortcut" to Power BI Desktop. The actual implementation calls `sync_desktop()`: it saves and closes the open `.pbip`, re-applies any PBIR edits that Desktop's save would overwrite, then reopens the file. The stale wording was confusing users who expected a `Ctrl+Shift+F5` keypress and looked it up in Microsoft's shortcut docs ([#8](https://github.com/MinaSaad1/pbi-cli/issues/8)).
 - Auto-sync section of the same skill now states explicitly that sync closes and reopens Desktop after each write, so the close/reopen behavior triggered by `pbi visual update` (and other write commands) is no longer surprising. `--no-sync` remains the escape hatch.
 - `pbi --version` reports the installed version again. `__version__` was hardcoded and had drifted to 3.10.10; it is now read from package metadata, so it cannot drift from the released version again ([#18](https://github.com/MinaSaad1/pbi-cli/issues/18)).
+- `power-bi-report` and `power-bi-visuals` examples used a three-positional `pbi measure create` form that Click rejects. They now pass the name positionally with `-e/--expression` and `-t/--table`.
 
 ### Security
 - Desktop discovery can no longer select the wrong Power BI Desktop instance. The hint predicate matched substrings against every ancestor directory name, so ordinary path components acted as wildcards -- a username directory made an unrelated `Mina_Test.pbip` match a hint under `C:/Users/mina/`. Because `_find_desktop_process` hands its first match to `_close_with_save`, a false match force-closed, saved and reopened someone else's session. Matching is now exact.
 
 ### Changed
 - The "All Commands" table listed `skills install/list/uninstall` alongside `pbi` subcommands, though the group is registered on the `pbi-cli` entry point only. It now carries the `pbi-cli` prefix explicitly ([#18](https://github.com/MinaSaad1/pbi-cli/issues/18)).
+- Skills now warn about the schema errors that stop a `.pbip` from opening in Desktop: `power-bi-report` documents the `.pbip` artifact and `definition.pbir` rules, `power-bi-themes` lists theme properties that crash Desktop on open, and `power-bi-visuals` notes that measures must exist in the TMDL before `visual bind` ([#9](https://github.com/MinaSaad1/pbi-cli/pull/9), thanks [@Priya-BI](https://github.com/Priya-BI)).
 
 ### Removed
 - `src/pbi_cli/utils/desktop_reload.py` -- dead code. The Ctrl+Shift+F5 keyboard-shortcut module was an earlier implementation no longer imported anywhere in `src/`. The `[reload]` extras in `pyproject.toml` (which installs `pywin32`) is unchanged because `desktop_sync.py` still depends on it.
