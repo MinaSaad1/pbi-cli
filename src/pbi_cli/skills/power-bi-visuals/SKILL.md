@@ -111,6 +111,17 @@ The JSON output reports `kind` and `resolved_by` per field, plus a `warnings` en
 a field is missing from the model (usually a typo). Force the wrapper for every field
 in one call with `--kind column` or `--kind measure`.
 
+Columns bound to a value role get the implicit aggregation Desktop would apply, taken from
+the column's `summarizeBy` (Sum for numeric columns by default). Text columns count on
+charts and matrices and stay as plain columns in tables and cards. Category, row, legend
+and slicer fields are never aggregated. Override with `--aggregation`:
+
+```bash
+# Average price per region instead of the model's default Sum
+pbi visual bind mybar --page p1 \
+    --category "Geography[Region]" --value "Sales[Price]" --aggregation average
+```
+
 ```bash
 # Slicer on a dimension column (written as Column)
 pbi visual bind myslicer --page p1 --field "Geography[Region]"
