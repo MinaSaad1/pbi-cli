@@ -10,10 +10,12 @@ from __future__ import annotations
 import json
 import re
 import secrets
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
 from pbi_cli.core.errors import PbiCliError, VisualTypeError
+from pbi_cli.core.field_resolver import FieldIndex, index_from_report
 from pbi_cli.core.pbir_models import (
     SUPPORTED_VISUAL_TYPES,
     VISUAL_TYPE_ALIASES,
@@ -106,6 +108,24 @@ MEASURE_ROLES: frozenset[str] = frozenset(
         "MaxValue",
     }
 )
+
+# Slicers filter on columns: their "Values" role holds dimension columns.
+SLICER_VISUAL_TYPES: frozenset[str] = frozenset(
+    {"slicer", "textSlicer", "listSlicer", "advancedSlicerVisual"}
+)
+
+_VALID_KINDS = frozenset({"auto", "column", "measure"})
+
+
+def _default_is_measure(visual_type: str, user_role: str, pbir_role: str) -> bool:
+    """Fallback Column/Measure guess when the semantic model can't be consulted."""
+    if visual_type in SLICER_VISUAL_TYPES:
+        return False
+    if visual_type == "tableEx":
+        # Table "Values" mixes both; trust the flag the user picked.
+        return user_role == "value"
+    return pbir_role in MEASURE_ROLES
+
 
 # User-friendly role aliases to PBIR role names
 ROLE_ALIASES: dict[str, dict[str, str]] = {
@@ -542,17 +562,23 @@ def visual_bind(
     page_name: str,
     visual_name: str,
     bindings: list[dict[str, Any]],
+    field_index: FieldIndex | None = None,
+    live_index_loader: Callable[[], FieldIndex | None] | None = None,
 ) -> dict[str, Any]:
     """Bind semantic model fields to visual data roles.
 
     Each binding dict should have:
       - ``role``: Data role (e.g. "category", "value", "row")
       - ``field``: Field reference in ``Table[Column]`` notation
-      - ``measure``: (optional) bool, force treat as measure
+      - ``kind``: (optional) ``"column"``, ``"measure"`` or ``"auto"`` (default)
+      - ``measure``: (optional, legacy) bool, same as ``kind="measure"``
 
     Roles are resolved through ``ROLE_ALIASES`` to the actual PBIR role name.
-    Measure vs Column is determined by the resolved role: value/field/indicator/goal
-    roles default to Measure; category/row/legend default to Column.
+    With ``kind="auto"`` the Column/Measure wrapper is decided by, in order:
+
+    1. ``field_index`` (defaults to the TMDL / model.bim the report points to)
+    2. ``live_index_loader`` (called lazily, only for fields step 1 missed)
+    3. A per-visual default: slicers bind columns, value roles bind measures
     """
     visual_dir = get_visual_dir(definition_path, page_name, visual_name)
     vfile = visual_dir / "visual.json"
@@ -568,11 +594,21 @@ def visual_bind(
 
     role_map = ROLE_ALIASES.get(visual_type, {})
     applied: list[dict[str, str]] = []
+    warnings: list[str] = []
+
+    if field_index is None:
+        field_index = index_from_report(definition_path)
+    live_index: FieldIndex | None = None
+    live_loaded = False
 
     for binding in bindings:
         user_role = binding["role"].lower()
         field_ref = binding["field"]
-        force_measure = binding.get("measure", False)
+        kind = str(binding.get("kind") or "auto").lower()
+        if binding.get("measure"):
+            kind = "measure"
+        if kind not in _VALID_KINDS:
+            raise PbiCliError(f"Invalid field kind '{kind}'. Use column, measure or auto.")
 
         # Resolve role alias
         pbir_role = role_map.get(user_role, binding["role"])
@@ -580,25 +616,42 @@ def visual_bind(
         # Parse Table[Column]
         table, column = _parse_field_ref(field_ref)
 
-        # Determine measure vs column: explicit flag, or role-based heuristic
-        is_measure = force_measure or pbir_role in MEASURE_ROLES
+        if kind != "auto":
+            is_measure = kind == "measure"
+            resolved_by = "explicit"
+        else:
+            hit = field_index.lookup(table, column) if field_index else None
+            source = field_index.source if field_index else ""
+            if hit is None and live_index_loader is not None:
+                if not live_loaded:
+                    live_index = live_index_loader()
+                    live_loaded = True
+                if live_index is not None:
+                    hit = live_index.lookup(table, column)
+                    source = live_index.source
+            if hit is not None:
+                is_measure = hit.kind == "measure"
+                table, column = hit.table, hit.name
+                resolved_by = source
+            else:
+                is_measure = _default_is_measure(visual_type, user_role, pbir_role)
+                resolved_by = "default"
+                if field_index or live_index:
+                    warnings.append(
+                        f"'{field_ref}' was not found in the semantic model; "
+                        f"bound as {'Measure' if is_measure else 'Column'}. "
+                        "Check the name or pass --kind to override."
+                    )
 
         # Build queryState projection (uses Entity directly, matching Desktop)
         query_ref = f"{table}.{column}"
-        if is_measure:
-            field_expr: dict[str, Any] = {
-                "Measure": {
-                    "Expression": {"SourceRef": {"Entity": table}},
-                    "Property": column,
-                }
+        wrapper = "Measure" if is_measure else "Column"
+        field_expr: dict[str, Any] = {
+            wrapper: {
+                "Expression": {"SourceRef": {"Entity": table}},
+                "Property": column,
             }
-        else:
-            field_expr = {
-                "Column": {
-                    "Expression": {"SourceRef": {"Entity": table}},
-                    "Property": column,
-                }
-            }
+        }
 
         projection: dict[str, Any] = {
             "field": field_expr,
@@ -617,18 +670,23 @@ def visual_bind(
                 "role": pbir_role,
                 "field": field_ref,
                 "query_ref": query_ref,
+                "kind": wrapper,
+                "resolved_by": resolved_by,
             }
         )
 
     data["visual"] = visual_config
     _write_json(vfile, data)
 
-    return {
+    result: dict[str, Any] = {
         "status": "bound",
         "name": visual_name,
         "page": page_name,
         "bindings": applied,
     }
+    if warnings:
+        result["warnings"] = warnings
+    return result
 
 
 # ---------------------------------------------------------------------------
