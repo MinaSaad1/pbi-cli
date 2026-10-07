@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from pbi_cli.core.errors import ReportNotFoundError
+from pbi_cli.core.errors import AmbiguousReportError, ReportNotFoundError
 
 # Maximum parent directories to walk up when auto-detecting
 _MAX_WALK_UP = 5
@@ -64,14 +64,24 @@ def _resolve_explicit(path: Path) -> Path:
 
 
 def _find_definition_walkup(start: Path) -> Path | None:
-    """Walk up from *start* looking for a .Report/definition/ folder."""
+    """Walk up from *start* looking for a .Report/definition/ folder.
+
+    Raises ``AmbiguousReportError`` if a single directory level contains more
+    than one valid ``.Report`` folder -- silently picking one here would let
+    a command write into a report the caller never meant to touch.
+    """
     current = start.resolve()
     for _ in range(_MAX_WALK_UP):
-        for child in current.iterdir():
+        matches = []
+        for child in sorted(current.iterdir()):
             if child.is_dir() and child.name.endswith(".Report"):
                 defn = child / "definition"
                 if defn.is_dir() and (defn / "report.json").exists():
-                    return defn
+                    matches.append(defn)
+        if len(matches) > 1:
+            raise AmbiguousReportError([str(m.parent) for m in matches])
+        if matches:
+            return matches[0]
         parent = current.parent
         if parent == current:
             break
