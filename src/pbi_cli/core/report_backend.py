@@ -491,13 +491,14 @@ def theme_set(definition_path: Path, theme_path: Path) -> dict[str, Any]:
         raise PbiCliError(f"Theme file not found: {theme_path}")
 
     theme_data = _read_json(theme_path)
+    theme_name = theme_data.get("name", theme_path.stem)
     report_json_path = definition_path / "report.json"
     report_data = _read_json(report_json_path)
 
     # Set custom theme
     theme_collection = report_data.get("themeCollection", {})
     theme_collection["customTheme"] = {
-        "name": theme_data.get("name", theme_path.stem),
+        "name": theme_name,
         "reportVersionAtImport": "5.55",
         "type": "RegisteredResources",
     }
@@ -510,21 +511,21 @@ def theme_set(definition_path: Path, theme_path: Path) -> dict[str, Any]:
     theme_dest = resources_dir / theme_path.name
     theme_dest.write_text(theme_path.read_text(encoding="utf-8"), encoding="utf-8")
 
-    # Update resource packages in report.json
+    # name/path are the theme's display name, no folder, no extension --
+    # matches Desktop's own save output, not the source filename.
     resource_packages = report_data.get("resourcePackages", [])
     found = False
     for pkg in resource_packages:
         if pkg.get("name") == "RegisteredResources":
             found = True
             items = pkg.get("items", [])
-            # Add or update theme entry
             theme_item = {
-                "name": theme_path.name,
-                "type": 202,
-                "path": f"BaseThemes/{theme_path.name}",
+                "name": theme_name,
+                "type": "CustomTheme",
+                "path": theme_name,
             }
             existing_names = {i["name"] for i in items}
-            if theme_path.name not in existing_names:
+            if theme_name not in existing_names:
                 items.append(theme_item)
             pkg["items"] = items
             break
@@ -536,9 +537,9 @@ def theme_set(definition_path: Path, theme_path: Path) -> dict[str, Any]:
                 "type": "RegisteredResources",
                 "items": [
                     {
-                        "name": theme_path.name,
-                        "type": 202,
-                        "path": f"BaseThemes/{theme_path.name}",
+                        "name": theme_name,
+                        "type": "CustomTheme",
+                        "path": theme_name,
                     }
                 ],
             }
