@@ -63,3 +63,16 @@ class ReportNotFoundError(PbiCliError):
         ),
     ) -> None:
         super().__init__(message)
+
+
+class AmbiguousReportError(PbiCliError):
+    """Raised when auto-detection finds more than one candidate .Report folder."""
+
+    def __init__(self, candidates: list[str]) -> None:
+        self.candidates = candidates
+        listed = "\n".join(f"  - {c}" for c in candidates)
+        super().__init__(
+            "Multiple .Report folders found and no --path was given:\n"
+            f"{listed}\n"
+            "Pass --path to pick one."
+        )

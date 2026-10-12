@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from pbi_cli.core.errors import ReportNotFoundError
+from pbi_cli.core.errors import AmbiguousReportError, ReportNotFoundError
 from pbi_cli.core.pbir_path import (
     get_page_dir,
     get_pages_dir,
@@ -186,6 +186,45 @@ def test_resolve_no_report_anywhere_raises(tmp_path: Path, monkeypatch: pytest.M
 
     with pytest.raises(ReportNotFoundError):
         resolve_report_path()
+
+
+def test_resolve_walkup_ambiguous_raises(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Two sibling .Report folders with no --path raises AmbiguousReportError
+    instead of silently picking one."""
+    scaffold_valid_pbir(tmp_path, report_name="ReportA")
+    scaffold_valid_pbir(tmp_path, report_name="ReportB")
+    monkeypatch.chdir(tmp_path)
+
+    with pytest.raises(AmbiguousReportError) as exc_info:
+        resolve_report_path()
+
+    assert "ReportA.Report" in str(exc_info.value)
+    assert "ReportB.Report" in str(exc_info.value)
+
+
+def test_resolve_walkup_single_report_still_works(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A single .Report folder still resolves normally (no false positive)."""
+    definition = scaffold_valid_pbir(tmp_path, report_name="OnlyReport")
+    monkeypatch.chdir(tmp_path)
+
+    result = resolve_report_path()
+
+    assert result == definition.resolve()
+
+
+def test_resolve_explicit_path_bypasses_ambiguity(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An explicit --path is unaffected even with multiple sibling .Report folders."""
+    definition_a = scaffold_valid_pbir(tmp_path, report_name="ReportA")
+    scaffold_valid_pbir(tmp_path, report_name="ReportB")
+    monkeypatch.chdir(tmp_path)
+
+    result = resolve_report_path(explicit_path=str(definition_a.parent))
+
+    assert result == definition_a.resolve()
 
 
 # ---------------------------------------------------------------------------
