@@ -861,7 +861,33 @@ class TestThemeSet:
         )
         assert reg is not None
         items = reg.get("items", [])
-        assert any(i["name"] == "Ocean.json" for i in items)
+        assert any(i["name"] == "Ocean" for i in items)
+
+    def test_theme_set_resource_package_path_is_bare_theme_name(
+        self, sample_report: Path, tmp_path: Path
+    ) -> None:
+        """name/path match Desktop's own save output: the theme's display
+        name, no folder prefix, no extension -- not the source filename."""
+        theme_file = self._make_theme_file(tmp_path, name="Ocean")
+        theme_set(sample_report, theme_file)
+        report_data = _read(sample_report / "report.json")
+        packages: list[dict[str, Any]] = report_data.get("resourcePackages", [])
+        reg = next(p for p in packages if p.get("name") == "RegisteredResources")
+        item = next(i for i in reg["items"] if i["name"] == "Ocean")
+        assert item["path"] == "Ocean"
+
+    def test_theme_set_resource_package_type_is_custom_theme_string(
+        self, sample_report: Path, tmp_path: Path
+    ) -> None:
+        """type is the schema's ResourcePackageItemType string enum
+        ("CustomTheme"), not a numeric code."""
+        theme_file = self._make_theme_file(tmp_path, name="Ocean")
+        theme_set(sample_report, theme_file)
+        report_data = _read(sample_report / "report.json")
+        packages: list[dict[str, Any]] = report_data.get("resourcePackages", [])
+        reg = next(p for p in packages if p.get("name") == "RegisteredResources")
+        item = next(i for i in reg["items"] if i["name"] == "Ocean")
+        assert item["type"] == "CustomTheme"
 
     def test_theme_set_idempotent_for_same_theme(self, sample_report: Path, tmp_path: Path) -> None:
         """Applying the same theme twice does not duplicate resource entries."""
@@ -873,8 +899,8 @@ class TestThemeSet:
         reg = next(p for p in packages if p.get("name") == "RegisteredResources")
         items = reg.get("items", [])
         names = [i["name"] for i in items]
-        # No duplicate entries for the same file
-        assert names.count("Stable.json") == 1
+        # No duplicate entries for the same theme
+        assert names.count("Stable") == 1
 
     def test_theme_set_missing_theme_file_raises(self, sample_report: Path, tmp_path: Path) -> None:
         """Referencing a theme file that does not exist raises PbiCliError."""
