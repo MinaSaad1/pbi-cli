@@ -1,8 +1,14 @@
 """Regenerate assets/downloads-chart.svg from pypistats.org data.
 
-Fetches daily download counts for pbi-cli-tool (mirrors excluded), computes a
-cumulative series, and writes a dark-theme SVG line chart that matches the
-visual style of the other assets in this repo.
+Fetches daily download counts for pbi-cli-tool (mirrors excluded), merges them
+into assets/downloads-history.csv, computes a cumulative series, and writes a
+dark-theme SVG line chart that matches the visual style of the other assets in
+this repo.
+
+pypistats only keeps roughly the last 180 days, so the CSV is the source of
+truth for older days. Without it the cumulative total shrinks as early days
+age out of the API window. Values returned by the API override stored values
+for the same date, so late corrections and backfilled days are picked up.
 
 Runs with stdlib only so it works in CI without extra dependencies.
 
@@ -12,15 +18,18 @@ Usage:
 
 from __future__ import annotations
 
+import csv
 import json
 import sys
 import urllib.request
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from pathlib import Path
 
 PACKAGE = "pbi-cli-tool"
 API_URL = f"https://pypistats.org/api/packages/{PACKAGE}/overall?mirrors=false"
-OUTPUT_PATH = Path(__file__).resolve().parent.parent / "assets" / "downloads-chart.svg"
+ASSETS_DIR = Path(__file__).resolve().parent.parent / "assets"
+OUTPUT_PATH = ASSETS_DIR / "downloads-chart.svg"
+HISTORY_PATH = ASSETS_DIR / "downloads-history.csv"
 
 # Chart geometry
 WIDTH = 850
@@ -54,12 +63,51 @@ def fetch_downloads() -> list[tuple[date, int]]:
     return rows
 
 
-def to_cumulative(rows: list[tuple[date, int]]) -> list[tuple[date, int]]:
+def load_history(path: Path = HISTORY_PATH) -> dict[date, int]:
+    """Return stored daily downloads keyed by date (empty if no file yet)."""
+    if not path.exists():
+        return {}
+    with path.open(newline="", encoding="utf-8") as fh:
+        return {
+            datetime.strptime(row["date"], "%Y-%m-%d").date(): int(row["downloads"])
+            for row in csv.DictReader(fh)
+        }
+
+
+def save_history(history: dict[date, int], path: Path = HISTORY_PATH) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("w", newline="", encoding="utf-8") as fh:
+        writer = csv.writer(fh, lineterminator="\n")
+        writer.writerow(["date", "downloads"])
+        for d in sorted(history):
+            writer.writerow([d.isoformat(), history[d]])
+
+
+def merge_history(
+    history: dict[date, int], fetched: list[tuple[date, int]]
+) -> dict[date, int]:
+    """Union of stored and fetched days; fetched values win on overlap."""
+    merged = dict(history)
+    merged.update(fetched)
+    return merged
+
+
+def to_cumulative(daily: dict[date, int]) -> list[tuple[date, int]]:
+    """Cumulative series with one point per calendar day.
+
+    Days missing from the data carry the previous total forward, so a gap in
+    pypistats shows as a flat segment instead of compressing the x-axis.
+    """
+    if not daily:
+        return []
+    first, last = min(daily), max(daily)
     total = 0
     out: list[tuple[date, int]] = []
-    for d, n in rows:
-        total += n
+    d = first
+    while d <= last:
+        total += daily.get(d, 0)
         out.append((d, total))
+        d += timedelta(days=1)
     return out
 
 
@@ -207,9 +255,11 @@ def main() -> int:
         print("pypistats returned no rows", file=sys.stderr)
         return 1
 
-    cumulative = to_cumulative(daily)
+    history = merge_history(load_history(), daily)
+    cumulative = to_cumulative(history)
     svg = build_svg(cumulative)
 
+    save_history(history)
     OUTPUT_PATH.parent.mkdir(parents=True, exist_ok=True)
     OUTPUT_PATH.write_text(svg, encoding="utf-8")
     print(f"Wrote {OUTPUT_PATH} ({len(cumulative)} days, {cumulative[-1][1]:,} total downloads)")
