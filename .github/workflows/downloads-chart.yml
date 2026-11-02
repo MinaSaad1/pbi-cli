@@ -26,12 +26,12 @@ jobs:
 
       - name: Commit and push updated chart
         run: |
-          if git diff --quiet assets/downloads-chart.svg; then
+          if git diff --quiet assets/downloads-chart.svg assets/downloads-history.csv; then
             echo "No changes to downloads chart."
             exit 0
           fi
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add assets/downloads-chart.svg
+          git add assets/downloads-chart.svg assets/downloads-history.csv
           git commit -m "chore: refresh downloads chart"
           git push
